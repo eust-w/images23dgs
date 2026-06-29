@@ -648,7 +648,7 @@ VIEWER_HTML = r"""<!doctype html>
       const layer = state.manifest.layers.spark_3dgs;
       if (!layer.available) throw new Error("Spark layer is unavailable");
       setLayerState("spark", "loading");
-      setStatus("Loading Spark 3DGS...");
+      setStatus(`Loading Spark 3DGS...\nThis downloads and parses the full 3DGS PLY. On Wuying SSH tunnel this can be slow; use 3DGS point cloud for quick preview.`);
       setProgress(8);
       const { SplatMesh } = await loadSparkModule();
       await ensureSparkRenderer();
@@ -656,7 +656,10 @@ VIEWER_HTML = r"""<!doctype html>
         const splat = new SplatMesh({
           url: cacheBust(assetUrl(layer.file)),
           onProgress: (event) => {
-            if (event?.lengthComputable && event.total) setProgress(8 + (event.loaded / event.total) * 82);
+            if (event?.lengthComputable && event.total) {
+              setProgress(8 + (event.loaded / event.total) * 82);
+              setStatus(`Loading Spark 3DGS...\n${formatBytes(event.loaded)} / ${formatBytes(event.total)} downloaded. Use point cloud for quick preview.`);
+            }
           },
           onLoad: () => resolve(splat)
         });
@@ -842,6 +845,18 @@ VIEWER_HTML = r"""<!doctype html>
         offset += chunk.byteLength;
       }
       return out.buffer;
+    }
+
+    function formatBytes(bytes) {
+      if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+      const units = ["B", "KB", "MB", "GB"];
+      let value = bytes;
+      let index = 0;
+      while (value >= 1024 && index < units.length - 1) {
+        value /= 1024;
+        index += 1;
+      }
+      return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
     }
 
     async function loadPointCloud() {
@@ -1147,8 +1162,12 @@ VIEWER_HTML = r"""<!doctype html>
     document.getElementById("resetView").addEventListener("click", () => fitBox(state.lastBox, false));
     document.getElementById("loadVisual").addEventListener("click", async () => {
       try {
-        if (state.manifest?.layers.spark_3dgs.available) await loadSpark();
-        else await loadPointCloud();
+        await loadPointCloud();
+        try {
+          await loadColmap();
+        } catch (error) {
+          console.warn("colmap", error);
+        }
       } catch (error) {
         setStatus(error instanceof Error ? error.message : String(error));
       }
