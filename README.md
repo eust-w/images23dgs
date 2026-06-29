@@ -107,20 +107,21 @@ downloads this GitHub repository, creates `/opt/images23dgs_app`, installs the
 web product, and runs the product doctor check.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/eust-w/images23dgs/main/scripts/images23dgs-installer -o images23dgs-installer
-chmod +x images23dgs-installer
-sudo ./images23dgs-installer --start
+curl -fsSL https://raw.githubusercontent.com/eust-w/images23dgs/main/scripts/images23dgs-installer | sudo bash -s -- --start
 ```
 
-For the private GitHub repository, pass a token that can read the repository:
+If the machine has `wget` but no `curl`:
 
 ```bash
-export GITHUB_TOKEN=ghp_xxx
-curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/eust-w/images23dgs/main/scripts/images23dgs-installer \
-  -o images23dgs-installer
-chmod +x images23dgs-installer
-sudo -E ./images23dgs-installer --start
+wget -qO- https://raw.githubusercontent.com/eust-w/images23dgs/main/scripts/images23dgs-installer | sudo bash -s -- --start
+```
+
+If the machine lacks the basic downloader too, install only the downloader first
+with the OS package manager, then run the installer:
+
+```bash
+sudo apt-get update && sudo apt-get install -y curl ca-certificates && \
+  curl -fsSL https://raw.githubusercontent.com/eust-w/images23dgs/main/scripts/images23dgs-installer | sudo bash -s -- --start
 ```
 
 If the source is already present on the machine:
