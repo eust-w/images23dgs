@@ -81,6 +81,7 @@ install_aholo_transform() {
     fi
   fi
 
+  export PATH="$APP_ROOT/node/bin:$PATH"
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "+ $npm_bin install -g @manycore/aholo-splat-transform"
   elif [[ -x "$npm_bin" ]]; then

@@ -127,7 +127,7 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
       setStatus(`正在解析 ${Math.round(bytes.byteLength / 1048576)} MB 3DGS...`);
       const fileType = SplatLoader.detectSplatFileType?.(url, bytes) ?? SplatLoader.SplatFileType.PLY;
       const ext = new URL(url).pathname.split(".").pop().toLowerCase();
-      const packType = ext === "sog" ? SplatLoader.SplatPackType.Compressed : SplatLoader.SplatPackType.SuperCompressed;
+      const packType = ext === "ply" ? SplatLoader.SplatPackType.SuperCompressed : SplatLoader.SplatPackType.Compressed;
       const data = await SplatLoader.parseSplatData(fileType, bytes, packType);
       const splat = await SplatUtils.createSplat(data);
 
