@@ -30,7 +30,7 @@ sudo apt-get update && sudo apt-get install -y curl ca-certificates && \
 After startup, open:
 
 ```text
-http://<server-ip>:18123/
+http://SERVER_IP:18123/
 ```
 
 For SSH tunneling from your laptop:
@@ -103,7 +103,7 @@ The web UI is Chinese by default and contains these tabs:
 
 Typical flow:
 
-1. Open `http://<server-ip>:18123/`.
+1. Open `http://SERVER_IP:18123/`.
 2. In `数据集`, upload data or import a local directory.
 3. In `任务`, choose a dataset and one template:
    - `快速预览`: smoke test, low cost.
@@ -117,7 +117,7 @@ Typical flow:
 Job artifacts are stored under:
 
 ```text
-/opt/images23dgs_app/workspace/runs/<job_id>/
+/opt/images23dgs_app/workspace/runs/JOB_ID/
 ```
 
 Important files:
