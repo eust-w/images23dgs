@@ -167,6 +167,7 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
       camera = new PerspectiveCamera(60, Math.max(0.1, container.clientWidth / Math.max(1, container.clientHeight)), 0.01, 2000);
       viewer.setScene(scene);
       viewer.setCamera(camera);
+      viewer.resize();
       setViewerConfig(viewer, {
         pixelRatio: Math.min(1, 1 / Math.max(1, window.devicePixelRatio || 1)),
         pipeline: {
@@ -231,6 +232,7 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
           loadResource,
         );
         scene.add(lod.container);
+        scene.notifySceneChange();
         lod.tick(camera);
         lod.start();
         window.images23dgsAholoDebug = { mode: "lod", meta, loaded: false, camera: null, frames: 0 };
@@ -267,11 +269,13 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
         splat.autoFreeResourceOnGpuPacked = true;
 
         scene.add(splat);
+        scene.notifySceneChange();
         setStatus(`Aholo 已加载：${Number(layer.gaussians || 0).toLocaleString()} 个高斯。`);
       }
       resetCamera(Vector3);
       const render = () => {
         for (const tick of tickers) tick();
+        viewer.resize();
         camera.aspect = Math.max(0.1, container.clientWidth / Math.max(1, container.clientHeight));
         camera.updateProjectionMatrix();
         scene.notifySceneChange();
