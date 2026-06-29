@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_OWNER="${IMAGES23DGS_REPO_OWNER:-eust-w}"
+REPO_NAME="${IMAGES23DGS_REPO_NAME:-images23dgs}"
+REPO_REF="${IMAGES23DGS_REPO_REF:-main}"
+APP_ROOT="${IMAGES23DGS_APP_ROOT:-/opt/images23dgs_app}"
+SRC_DIR="${IMAGES23DGS_SRC_DIR:-$APP_ROOT/src}"
+PYTHON_BOOTSTRAP="${PYTHON_BOOTSTRAP:-python3}"
+START_AFTER_INSTALL=0
+KEEP_TMP=0
+
+usage() {
+  cat <<EOF
+images23dgs single-file installer
+
+Usage:
+  ./images23dgs-installer [options]
+
+Options:
+  --repo OWNER/NAME     GitHub repository. Default: ${REPO_OWNER}/${REPO_NAME}
+  --ref REF             Branch, tag, or commit. Default: ${REPO_REF}
+  --app-root PATH       Product app root. Default: ${APP_ROOT}
+  --src-dir PATH        Source directory. Default: \$APP_ROOT/src
+  --start               Start frontend/backend/worker after installation.
+  --keep-tmp            Keep temporary download directory for debugging.
+  -h, --help            Show this help.
+
+Private repo auth:
+  export GITHUB_TOKEN=ghp_xxx
+  # or
+  export GH_TOKEN=ghp_xxx
+
+Examples:
+  curl -fsSL https://raw.githubusercontent.com/eust-w/images23dgs/main/scripts/images23dgs-installer -o images23dgs-installer
+  chmod +x images23dgs-installer
+  sudo ./images23dgs-installer --start
+
+  GITHUB_TOKEN=... bash images23dgs-installer --start
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      repo_value="${2:?missing value for --repo}"
+      REPO_OWNER="${repo_value%%/*}"
+      REPO_NAME="${repo_value#*/}"
+      if [[ -z "$REPO_OWNER" || -z "$REPO_NAME" || "$REPO_OWNER" == "$REPO_NAME" ]]; then
+        echo "--repo must be OWNER/NAME" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --ref)
+      REPO_REF="${2:?missing value for --ref}"
+      shift 2
+      ;;
+    --app-root)
+      APP_ROOT="${2:?missing value for --app-root}"
+      SRC_DIR="${IMAGES23DGS_SRC_DIR:-$APP_ROOT/src}"
+      shift 2
+      ;;
+    --src-dir)
+      SRC_DIR="${2:?missing value for --src-dir}"
+      shift 2
+      ;;
+    --start)
+      START_AFTER_INSTALL=1
+      shift
+      ;;
+    --keep-tmp)
+      KEEP_TMP=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+need_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+fetch_github_archive() {
+  local url="$1"
+  local dst="$2"
+  local token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+  if command -v curl >/dev/null 2>&1; then
+    if [[ -n "$token" ]]; then
+      curl -fL -H "Authorization: Bearer ${token}" -H "Accept: application/vnd.github+json" "$url" -o "$dst"
+    else
+      curl -fL "$url" -o "$dst"
+    fi
+  elif command -v wget >/dev/null 2>&1; then
+    if [[ -n "$token" ]]; then
+      wget --header="Authorization: Bearer ${token}" --header="Accept: application/vnd.github+json" -O "$dst" "$url"
+    else
+      wget -O "$dst" "$url"
+    fi
+  else
+    echo "missing required command: curl or wget" >&2
+    exit 1
+  fi
+}
+
+install_base_tools_if_possible() {
+  missing=()
+  for cmd in "$PYTHON_BOOTSTRAP" tar; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      missing+=("$cmd")
+    fi
+  done
+  if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
+    :
+  else
+    missing+=("curl")
+  fi
+  if [[ "${#missing[@]}" -eq 0 ]]; then
+    return 0
+  fi
+  if [[ "$(id -u)" != "0" ]]; then
+    echo "missing required commands: ${missing[*]}" >&2
+    echo "run as root/sudo or install them first" >&2
+    exit 1
+  fi
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    apt-get install -y python3 curl tar ca-certificates
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y python3 curl tar ca-certificates
+  else
+    echo "missing required commands: ${missing[*]}" >&2
+    echo "no supported package manager found" >&2
+    exit 1
+  fi
+}
+
+install_base_tools_if_possible
+need_cmd "$PYTHON_BOOTSTRAP"
+need_cmd tar
+
+tmp_dir="$(mktemp -d)"
+if [[ "$KEEP_TMP" != "1" ]]; then
+  trap 'rm -rf "$tmp_dir"' EXIT
+fi
+
+archive_url="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/tarball/${REPO_REF}"
+archive_path="$tmp_dir/images23dgs.tar.gz"
+unpack_dir="$tmp_dir/unpack"
+
+echo "downloading ${REPO_OWNER}/${REPO_NAME}@${REPO_REF}"
+fetch_github_archive "$archive_url" "$archive_path"
+mkdir -p "$unpack_dir"
+tar -xzf "$archive_path" -C "$unpack_dir"
+
+first_dir="$(find "$unpack_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+if [[ -z "$first_dir" || ! -f "$first_dir/scripts/bootstrap_wuying.sh" ]]; then
+  echo "downloaded archive is not an images23dgs source tree" >&2
+  exit 1
+fi
+
+cd "$first_dir"
+bootstrap_args=(--app-root "$APP_ROOT" --src-dir "$SRC_DIR")
+if [[ "$START_AFTER_INSTALL" == "1" ]]; then
+  bootstrap_args+=(--start)
+fi
+
+IMAGES23DGS_APP_ROOT="$APP_ROOT" \
+IMAGES23DGS_SRC_DIR="$SRC_DIR" \
+PYTHON_BOOTSTRAP="$PYTHON_BOOTSTRAP" \
+  bash scripts/bootstrap_wuying.sh "${bootstrap_args[@]}"

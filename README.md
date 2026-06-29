@@ -102,13 +102,25 @@ The viewer exposes independent layers:
 
 ## Wuying Web Product
 
-For a completely clean Wuying machine, use the bootstrap installer. It downloads
-the source package, creates `/opt/images23dgs_app`, installs the web product, and
-runs the product doctor check.
+For a completely clean Wuying machine, use the single-file installer. It
+downloads this GitHub repository, creates `/opt/images23dgs_app`, installs the
+web product, and runs the product doctor check.
 
 ```bash
-curl -fsSL https://YOUR_HOST/images23dgs/scripts/bootstrap_wuying.sh | \
-  bash -s -- --source https://YOUR_HOST/images23dgs/images23dgs.tar.gz
+curl -fsSL https://raw.githubusercontent.com/eust-w/images23dgs/main/scripts/images23dgs-installer -o images23dgs-installer
+chmod +x images23dgs-installer
+sudo ./images23dgs-installer --start
+```
+
+For the private GitHub repository, pass a token that can read the repository:
+
+```bash
+export GITHUB_TOKEN=ghp_xxx
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+  https://raw.githubusercontent.com/eust-w/images23dgs/main/scripts/images23dgs-installer \
+  -o images23dgs-installer
+chmod +x images23dgs-installer
+sudo -E ./images23dgs-installer --start
 ```
 
 If the source is already present on the machine:
