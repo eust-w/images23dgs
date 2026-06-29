@@ -49,6 +49,8 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
     const download = document.getElementById("download");
     let viewer = null;
     let camera = null;
+    let cameraTarget = [0, 0, 0];
+    let cameraRadius = 1.25;
 
     function setStatus(text, cls = "") {
       statusEl.className = cls ? `status ${cls}` : "status";
@@ -70,10 +72,25 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
     function resetCamera(Vector3) {
       if (!camera || !viewer) return;
       camera.up.set(0, -1, 0);
-      camera.position.set(0, -1.25, 2.25);
-      camera.lookAt(new Vector3(0, 0, 0));
+      const [x, y, z] = cameraTarget;
+      const d = Math.max(1, cameraRadius);
+      camera.position.set(x, y - d * 0.35, z + d * 1.8);
+      camera.lookAt(new Vector3(x, y, z));
       viewer.setCamera(camera);
       viewer.render();
+    }
+
+    function fitCameraToBox(box) {
+      if (!box?.min || !box?.max) return;
+      cameraTarget = [
+        (box.min[0] + box.max[0]) / 2,
+        (box.min[1] + box.max[1]) / 2,
+        (box.min[2] + box.max[2]) / 2,
+      ];
+      const dx = box.max[0] - box.min[0];
+      const dy = box.max[1] - box.min[1];
+      const dz = box.max[2] - box.min[2];
+      cameraRadius = Math.max(dx, dy, dz, 1);
     }
 
     async function fetchBytes(url, label) {
@@ -135,6 +152,7 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
         if (!(meta.magicCode === 2500660 && meta.type === "lod-splat")) {
           throw new Error("LOD metadata is not a supported lod-splat manifest.");
         }
+        fitCameraToBox(meta.forwardBox);
         const baseUrl = new URL("./", lodUrl).href;
         const loadResource = async relativeUrl => {
           const resourceUrl = new URL(relativeUrl, baseUrl).href;
