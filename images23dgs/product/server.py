@@ -137,6 +137,7 @@ def create_app(config: ProductConfig | None = None):
         for name, path, url in [
             ("run_manifest.json", run_dir / "reports" / "run_manifest.json", f"/runs/{job_id}/reports/run_manifest.json"),
             ("index.html", run_dir / "viewer" / "index.html", f"/runs/{job_id}/viewer/index.html"),
+            ("aholo_index.html", run_dir / "viewer" / "aholo" / "index.html", f"/runs/{job_id}/viewer/aholo/index.html"),
             ("source_view_qa.html", run_dir / "source_view_qa.html", f"/runs/{job_id}/source_view_qa.html"),
         ]:
             if path.is_file():

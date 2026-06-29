@@ -163,7 +163,12 @@ def _optional_int(value: object) -> int | None:
 
 def _write_artifact_index(run_dir: Path) -> None:
     artifacts = []
-    for path in [run_dir / "reports" / "run_manifest.json", run_dir / "viewer" / "index.html", run_dir / "source_view_qa.html"]:
+    for path in [
+        run_dir / "reports" / "run_manifest.json",
+        run_dir / "viewer" / "index.html",
+        run_dir / "viewer" / "aholo" / "index.html",
+        run_dir / "source_view_qa.html",
+    ]:
         if path.is_file():
             artifacts.append({"name": path.name, "path": str(path), "size": path.stat().st_size})
     (run_dir / "artifacts").mkdir(parents=True, exist_ok=True)

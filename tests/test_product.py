@@ -297,7 +297,11 @@ class ProductTests(unittest.TestCase):
             self.assertFalse(manifest["dry_run"])
             viewer_manifest = json.loads((root / "out" / "viewer" / "viewer_manifest.json").read_text(encoding="utf-8"))
             self.assertTrue(viewer_manifest["layers"]["spark_3dgs"]["available"])
+            self.assertTrue(viewer_manifest["layers"]["aholo_3dgs"]["available"])
+            self.assertEqual(viewer_manifest["layers"]["aholo_3dgs"]["viewer"], "aholo/index.html")
+            self.assertTrue((root / "out" / "viewer" / "aholo" / "index.html").is_file())
             self.assertEqual(viewer_manifest["metrics"]["gsplat_trained_gaussian_count"], 1)
+            self.assertEqual(Path(manifest["viewer"]["aholo_index_html"]), (root / "out" / "viewer" / "aholo" / "index.html").resolve())
             metrics = json.loads((root / "out" / "gsplat_training" / "pose_init_training_metrics.json").read_text(encoding="utf-8"))
             self.assertEqual(metrics["initial_scale_arg"], 0.006)
 

@@ -22,6 +22,14 @@ async function openJob(id){
   if(qa)$('qaFrame').src=qa.url;
   activateTab('preview');
 }
+async function openAholo(id){
+  selectedJob=jobs.find(j=>j.id===id)||await api(`/api/jobs/${id}`);
+  const artifacts=await api(`/api/jobs/${id}/artifacts`);
+  const aholo=artifacts.find(a=>a.url&&a.url.endsWith('/viewer/aholo/index.html'));
+  const viewer=artifacts.find(a=>a.url&&a.url.endsWith('/viewer/index.html'));
+  $('previewFrame').src=(aholo||viewer||{}).url||'about:blank';
+  activateTab('preview');
+}
 async function openQa(id){
   selectedJob=jobs.find(j=>j.id===id)||await api(`/api/jobs/${id}`);
   const artifacts=await api(`/api/jobs/${id}/artifacts`);
@@ -38,7 +46,7 @@ function jobCard(j){
   const canOpen=j.status==='succeeded';
   const canCancel=j.status==='queued'||j.status==='running';
   const params=Object.keys(j.parameters||{}).length?`<details><summary>参数</summary><pre>${escapeHtml(JSON.stringify(j.parameters,null,2))}</pre></details>`:'';
-  return `<div class="card job-card"><b>${templateLabel(j.template)}</b><span class="badge status-${j.status}">${j.status}</span><p class=muted>${j.id}</p><p class=muted>cancel: ${j.cancel_requested?'已请求':'否'}</p>${params}<div class=actions><button ${canOpen?'':'disabled'} onclick="openJob('${j.id}')">打开</button><button ${canOpen?'':'disabled'} onclick="openQa('${j.id}')">质检</button><button onclick="showLogs('${j.id}')">日志</button><button ${canCancel?'':'disabled'} onclick="cancelJob('${j.id}')">取消</button><button onclick="retryJob('${j.id}')">重试</button><button ${canOpen?'':'disabled'} onclick="downloadJob('${j.id}')">下载</button></div></div>`;
+  return `<div class="card job-card"><b>${templateLabel(j.template)}</b><span class="badge status-${j.status}">${j.status}</span><p class=muted>${j.id}</p><p class=muted>cancel: ${j.cancel_requested?'已请求':'否'}</p>${params}<div class=actions><button ${canOpen?'':'disabled'} onclick="openJob('${j.id}')">打开</button><button ${canOpen?'':'disabled'} onclick="openAholo('${j.id}')">Aholo</button><button ${canOpen?'':'disabled'} onclick="openQa('${j.id}')">质检</button><button onclick="showLogs('${j.id}')">日志</button><button ${canCancel?'':'disabled'} onclick="cancelJob('${j.id}')">取消</button><button onclick="retryJob('${j.id}')">重试</button><button ${canOpen?'':'disabled'} onclick="downloadJob('${j.id}')">下载</button></div></div>`;
 }
 function templateLabel(value){return {quick_preview:'快速预览',standard:'标准重建',rgbd_optimized:'RGBD优化',high_quality:'高质量训练'}[value]||value}
 function escapeHtml(value){return String(value).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}

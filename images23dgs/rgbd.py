@@ -17,6 +17,125 @@ from .viewer import VIEWER_HTML, _prepare_spark_ply
 LogFn = Callable[[str], None]
 
 
+AHOLO_VIEWER_HTML = r"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aholo 3DGS 预览</title>
+  <style>
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#070a0f;color:#eaf0f7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    #viewer{position:fixed;inset:0}
+    .hud{position:fixed;left:14px;top:14px;z-index:10;max-width:min(420px,calc(100vw - 28px));background:rgba(9,13,18,.82);border:1px solid rgba(137,160,190,.28);border-radius:8px;padding:12px 14px;backdrop-filter:blur(12px)}
+    h1{font-size:15px;margin:0 0 8px}.muted{color:#a9b7c8;font-size:12px;line-height:1.55;margin:6px 0}.status{font-size:13px;margin:0}.error{color:#ff9a9a;white-space:pre-wrap}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.actions a,.actions button{background:#162234;color:#edf5ff;border:1px solid #334964;border-radius:6px;padding:7px 9px;text-decoration:none;font-size:12px;cursor:pointer}
+  </style>
+</head>
+<body>
+  <div id="viewer"></div>
+  <div class="hud">
+    <h1>Aholo 3DGS 高性能预览</h1>
+    <p id="status" class="status">正在读取 viewer_manifest.json...</p>
+    <p class="muted">适合大规模 3D Gaussian Splatting 预览；如果浏览器禁用了外部 ESM CDN，请使用原始分层 viewer。</p>
+    <div class="actions">
+      <a href="../index.html">分层 viewer</a>
+      <a id="download" href="#">下载 PLY</a>
+      <button id="reset">重置相机</button>
+    </div>
+  </div>
+  <script type="module">
+    const statusEl = document.getElementById("status");
+    const container = document.getElementById("viewer");
+    const download = document.getElementById("download");
+    let viewer = null;
+    let camera = null;
+
+    function setStatus(text, cls = "") {
+      statusEl.className = cls ? `status ${cls}` : "status";
+      statusEl.textContent = text;
+    }
+
+    async function loadManifest() {
+      const manifest = await fetch("../viewer_manifest.json", { cache: "no-store" }).then(r => {
+        if (!r.ok) throw new Error(`manifest HTTP ${r.status}`);
+        return r.json();
+      });
+      const layer = manifest.layers?.aholo_3dgs || manifest.layers?.spark_3dgs;
+      if (!layer?.available || !layer.file) throw new Error("当前任务没有可用 3DGS PLY。");
+      const url = new URL("../" + layer.file, location.href).href;
+      return { manifest, layer, url };
+    }
+
+    function resetCamera(Vector3) {
+      if (!camera || !viewer) return;
+      camera.up.set(0, -1, 0);
+      camera.position.set(0, -1.25, 2.25);
+      camera.lookAt(new Vector3(0, 0, 0));
+      viewer.setCamera(camera);
+      viewer.render();
+    }
+
+    async function main() {
+      const { manifest, layer, url } = await loadManifest();
+      download.href = url;
+      setStatus(`正在加载 Aholo 包和 ${Number(layer.gaussians || 0).toLocaleString()} 个高斯...`);
+      const {
+        BackgroundMode,
+        Color,
+        PerspectiveCamera,
+        SplatLoader,
+        SplatUtils,
+        Vector3,
+        createViewer,
+        setViewerConfig,
+      } = await import("https://esm.sh/@manycore/aholo-viewer@1.5.1");
+
+      viewer = createViewer("images23dgs-aholo-viewer", container, {});
+      camera = new PerspectiveCamera(60, Math.max(0.1, container.clientWidth / Math.max(1, container.clientHeight)), 0.01, 2000);
+
+      setStatus(`正在下载 3DGS: ${layer.file}`);
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`3DGS HTTP ${response.status}`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      setStatus(`正在解析 ${Math.round(bytes.byteLength / 1048576)} MB 3DGS PLY...`);
+      const fileType = SplatLoader.detectSplatFileType?.(url, bytes) ?? SplatLoader.SplatFileType.PLY;
+      const data = await SplatLoader.parseSplatData(fileType, bytes, SplatLoader.SplatPackType.SuperCompressed);
+      const splat = await SplatUtils.createSplat(data);
+
+      viewer.getScene().add(splat);
+      setViewerConfig(viewer, {
+        pixelRatio: Math.min(1, 1 / Math.max(1, window.devicePixelRatio || 1)),
+        pipeline: {
+          Background: {
+            background: { active: BackgroundMode.BasicBackground, basic: { color: new Color(0.02, 0.025, 0.03) } },
+            ground: { enabled: false },
+          },
+          Splatting: {
+            enabled: true,
+            sort: { frustumCullingEnabled: true },
+          },
+          TAA: { enabled: false },
+        },
+      });
+      resetCamera(Vector3);
+      const render = () => viewer.render();
+      viewer.requestRenderHandler = () => requestAnimationFrame(render);
+      window.addEventListener("resize", () => resetCamera(Vector3));
+      document.getElementById("reset").onclick = () => resetCamera(Vector3);
+      setStatus(`Aholo 已加载：${Number(layer.gaussians || 0).toLocaleString()} 个高斯。`);
+      requestAnimationFrame(render);
+    }
+
+    main().catch(error => {
+      console.error(error);
+      setStatus(`Aholo 加载失败：${error?.message || error}`, "error");
+    });
+  </script>
+</body>
+</html>
+"""
+
+
 @dataclass(frozen=True)
 class RGBDOptimizeConfig:
     source: Path
@@ -166,6 +285,7 @@ def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> 
     )
     (viewer / "viewer_manifest.json").write_text(json.dumps(viewer_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (viewer / "index.html").write_text(VIEWER_HTML, encoding="utf-8")
+    aholo_viewer = _write_aholo_viewer(viewer, spark_asset, ply_info)
 
     run_manifest = {
         "schema": "images23dgs.rgbd_optimized.v1",
@@ -186,7 +306,7 @@ def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> 
         },
         "training": trained,
         "copied_training_assets": copied_training,
-        "viewer": {"index_html": str(viewer / "index.html"), "manifest_json": str(viewer / "viewer_manifest.json")},
+        "viewer": {"index_html": str(viewer / "index.html"), "manifest_json": str(viewer / "viewer_manifest.json"), "aholo_index_html": str(aholo_viewer) if aholo_viewer else None},
         "source_view_qa": str(output / "source_view_qa.html"),
         "dry_run": False,
     }
@@ -795,6 +915,14 @@ def _build_viewer_manifest(
                 "has_3dgs_fields": spark_info.get("has_3dgs_fields", False),
                 "source": "trained gsplat PLY attached to RGBD-PnP trajectory" if spark_asset else "No trained gsplat artifact supplied or discovered.",
             },
+            "aholo_3dgs": {
+                "label": "Aholo 3DGS high-performance preview",
+                "available": bool(spark_asset and spark_asset.is_file() and spark_info.get("has_3dgs_fields")),
+                "viewer": "aholo/index.html" if spark_asset and spark_asset.is_file() and spark_info.get("has_3dgs_fields") else None,
+                "file": _relative(viewer, spark_asset),
+                "gaussians": spark_info.get("vertex_count"),
+                "source": "Aholo viewer loads the same trained gsplat PLY; SOG/LOD conversion can be added with @manycore/aholo-splat-transform when Node is available.",
+            },
             "point_cloud": {
                 "label": "RGBD fused point cloud using PnP odometry",
                 "available": True,
@@ -823,7 +951,17 @@ def _build_viewer_manifest(
             "This job really ran RGBD ORB + depth PnP RANSAC and fused the depth point cloud.",
             "COLMAP layer is a text-model compatibility layer backed by RGBD-PnP poses.",
         ],
-    }
+}
+
+
+def _write_aholo_viewer(viewer: Path, spark_asset: Path | None, spark_info: dict[str, Any]) -> Path | None:
+    if not (spark_asset and spark_asset.is_file() and spark_info.get("has_3dgs_fields")):
+        return None
+    aholo_dir = viewer / "aholo"
+    aholo_dir.mkdir(parents=True, exist_ok=True)
+    index = aholo_dir / "index.html"
+    index.write_text(AHOLO_VIEWER_HTML, encoding="utf-8")
+    return index
 
 
 def _write_source_view_qa(path: Path, run_manifest: dict[str, Any], viewer_manifest: dict[str, Any], copied_training: dict[str, str]) -> None:
@@ -864,6 +1002,7 @@ def _write_dry_run(config: RGBDOptimizeConfig, rgb_files: list[Path], depth_file
                 "title": config.scene_name,
                 "layers": {
                     "spark_3dgs": {"available": False},
+                    "aholo_3dgs": {"available": False},
                     "point_cloud": {"available": False},
                     "collision_mesh": {"available": False},
                     "mjcf_geoms": {"available": False},
