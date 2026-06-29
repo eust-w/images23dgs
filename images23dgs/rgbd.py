@@ -29,6 +29,7 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
     .hud{position:fixed;left:14px;top:14px;z-index:10;max-width:min(420px,calc(100vw - 28px));background:rgba(9,13,18,.82);border:1px solid rgba(137,160,190,.28);border-radius:8px;padding:12px 14px;backdrop-filter:blur(12px)}
     h1{font-size:15px;margin:0 0 8px}.muted{color:#a9b7c8;font-size:12px;line-height:1.55;margin:6px 0}.status{font-size:13px;margin:0}.error{color:#ff9a9a;white-space:pre-wrap}
     .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.actions a,.actions button{background:#162234;color:#edf5ff;border:1px solid #334964;border-radius:6px;padding:7px 9px;text-decoration:none;font-size:12px;cursor:pointer}
+    #diagnostics{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#9fb0c3;font-size:11px;line-height:1.45;white-space:pre-wrap;margin:8px 0 0}
   </style>
 </head>
 <body>
@@ -41,12 +42,17 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
       <a href="../index.html">分层 viewer</a>
       <a id="download" href="#">下载 PLY</a>
       <button id="reset">重置相机</button>
+      <button id="viewFront">前视</button>
+      <button id="viewSide">侧视</button>
+      <button id="viewTop">俯视</button>
     </div>
+    <p id="diagnostics"></p>
   </div>
   <script type="module">
     const statusEl = document.getElementById("status");
     const container = document.getElementById("viewer");
     const download = document.getElementById("download");
+    const diagnostics = document.getElementById("diagnostics");
     let viewer = null;
     let camera = null;
     let cameraTarget = [0, 0, 0];
@@ -70,12 +76,26 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
     }
 
     function resetCamera(Vector3) {
+      setCameraPreset(Vector3, "front");
+    }
+
+    function setCameraPreset(Vector3, preset = "front") {
       if (!camera || !viewer) return;
       camera.up.set(0, -1, 0);
       const [x, y, z] = cameraTarget;
-      const d = Math.max(1, cameraRadius);
-      camera.position.set(x, y - d * 0.35, z + d * 1.8);
+      const d = Math.max(1, cameraRadius * 1.4);
+      if (preset === "side") {
+        camera.position.set(x + d * 1.8, y - d * 0.15, z + d * 0.45);
+      } else if (preset === "top") {
+        camera.up.set(0, 0, -1);
+        camera.position.set(x, y - d * 2.2, z);
+      } else {
+        camera.position.set(x, y - d * 0.35, z + d * 1.8);
+      }
+      camera.near = 0.001;
+      camera.far = Math.max(2000, d * 100);
       camera.lookAt(new Vector3(x, y, z));
+      camera.updateProjectionMatrix();
       viewer.setCamera(camera);
       viewer.render();
     }
@@ -91,6 +111,7 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
       const dy = box.max[1] - box.min[1];
       const dz = box.max[2] - box.min[2];
       cameraRadius = Math.max(dx, dy, dz, 1);
+      diagnostics.textContent = `bounds min=${box.min.map(v => v.toFixed(3)).join(",")} max=${box.max.map(v => v.toFixed(3)).join(",")}\ntarget=${cameraTarget.map(v => v.toFixed(3)).join(",")} radius=${cameraRadius.toFixed(3)}`;
     }
 
     async function fetchBytes(url, label) {
@@ -150,7 +171,7 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
         pixelRatio: Math.min(1, 1 / Math.max(1, window.devicePixelRatio || 1)),
         pipeline: {
           Background: {
-            background: { active: BackgroundMode.BasicBackground, basic: { color: new Color(0.02, 0.025, 0.03) } },
+            background: { active: BackgroundMode.BasicBackground, basic: { color: new Color(0.18, 0.19, 0.2) } },
             ground: { enabled: false },
           },
           Splatting: {
@@ -249,6 +270,9 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
       viewer.requestRenderHandler = () => {};
       window.addEventListener("resize", () => resetCamera(Vector3));
       document.getElementById("reset").onclick = () => resetCamera(Vector3);
+      document.getElementById("viewFront").onclick = () => setCameraPreset(Vector3, "front");
+      document.getElementById("viewSide").onclick = () => setCameraPreset(Vector3, "side");
+      document.getElementById("viewTop").onclick = () => setCameraPreset(Vector3, "top");
       requestAnimationFrame(render);
     }
 
