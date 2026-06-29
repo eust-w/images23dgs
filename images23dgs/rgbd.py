@@ -205,21 +205,28 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
             maxTextureSize: 8192,
           });
         };
+        const initialLodConfig = {
+          minLevel: Math.max(0, meta.levels - 1),
+          maxBudget: 6000000,
+          backgroundPenalty: 0.5,
+          outsidePenalty: 0.4,
+          behindPenalty: 0.1,
+          behindTolerance: -0.2,
+          behindDistanceTolerance: 2,
+          hysteresisTicks: 4,
+          schedulerParallelCounts: 99999,
+          schedulerExistingTaskLimit: 99999,
+          schedulerMinDuration: 0,
+        };
+        const fullLodConfig = { ...initialLodConfig, minLevel: 0 };
+        const promoteLod = message => {
+          lod.setConfig(fullLodConfig);
+          lod.tick(camera);
+          setStatus(message);
+        };
         const lod = new SplatUtils.LodSplat(
           meta,
-          {
-            minLevel: Math.max(0, meta.levels - 1),
-            maxBudget: 6000000,
-            backgroundPenalty: 0.5,
-            outsidePenalty: 0.4,
-            behindPenalty: 0.1,
-            behindTolerance: -0.2,
-            behindDistanceTolerance: 2,
-            hysteresisTicks: 4,
-            schedulerParallelCounts: 99999,
-            schedulerExistingTaskLimit: 99999,
-            schedulerMinDuration: 0,
-          },
+          initialLodConfig,
           createViewerContext(viewer),
           loadResource,
         );
@@ -232,11 +239,16 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
           window.images23dgsAholoDebug.frames += 1;
         });
         setStatus(`Aholo LOD 正在流式加载：${Number(layer.gaussians || meta.counts || 0).toLocaleString()} 个高斯。`);
+        const promoteTimer = setTimeout(() => {
+          promoteLod(`Aholo LOD 已切换到完整调度：${Number(layer.gaussians || meta.counts || 0).toLocaleString()} 个高斯。`);
+        }, 5000);
         lod.onFinishSchedule().then(() => {
+          clearTimeout(promoteTimer);
+          promoteLod(`Aholo LOD 已加载初始层，正在加载完整细节：${Number(layer.gaussians || meta.counts || 0).toLocaleString()} 个高斯。`);
           lod.tick(camera);
           window.images23dgsAholoDebug.loaded = true;
-          setStatus(`Aholo LOD 已加载：${Number(layer.gaussians || meta.counts || 0).toLocaleString()} 个高斯。`);
         }).catch(error => {
+          clearTimeout(promoteTimer);
           console.error(error);
           setStatus(`Aholo LOD 加载失败：${error?.message || error}`, "error");
         });
