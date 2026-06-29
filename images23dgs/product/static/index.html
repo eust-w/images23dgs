@@ -56,6 +56,7 @@
         <label>训练点上限 <input id="gsplatMaxPoints" type="number" min="1000" step="1000" value="80000"></label>
         <label>目标高斯数 <input id="gsplatTargetGaussians" type="number" min="1000" step="1000" value="50000"></label>
         <label>稠密增广点/帧 <input id="gsplatDensePoints" type="number" min="0" step="100" value="0"></label>
+        <label>高斯初始尺度 <input id="gsplatInitialScale" type="number" min="0" step="0.0005" placeholder="自动；EXR_RGBD建议0.006"></label>
         <label>已训练 3DGS PLY <input id="trainedPly" placeholder="/tmp/.../pose_init_trained_scene.ply"></label>
         <label>训练 metrics <input id="trainingMetrics" placeholder="/tmp/.../pose_init_training_metrics.json"></label>
       </div>

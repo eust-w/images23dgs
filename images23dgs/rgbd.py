@@ -39,6 +39,7 @@ class RGBDOptimizeConfig:
     gsplat_max_points: int = 80_000
     gsplat_target_gaussians: int = 50_000
     gsplat_dense_image_points_per_frame: int = 0
+    gsplat_initial_scale: float = 0.0
     gsplat_device: str = "cuda"
     metadata_pose_convention: str = "auto"
     dry_run: bool = False
@@ -738,6 +739,8 @@ def _run_or_resolve_training(config: RGBDOptimizeConfig, pose_dir: Path, source:
             "--device",
             config.gsplat_device,
         ]
+        if config.gsplat_initial_scale > 0:
+            command.extend(["--initial-scale", str(config.gsplat_initial_scale)])
         log("开始从零训练 3DGS: " + " ".join(command))
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         assert process.stdout is not None

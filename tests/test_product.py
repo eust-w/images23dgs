@@ -272,10 +272,10 @@ class ProductTests(unittest.TestCase):
             fake_train = root / "fake_train.py"
             fake_train.write_text(
                 "import argparse,json\n"
-                "p=argparse.ArgumentParser(); p.add_argument('--output-ply'); p.add_argument('--metrics-output'); p.add_argument('--preview-output'); p.add_argument('--multi-preview-output'); p.add_argument('--pose-init-dir'); p.add_argument('--output-dir')\n"
+                "p=argparse.ArgumentParser(); p.add_argument('--output-ply'); p.add_argument('--metrics-output'); p.add_argument('--preview-output'); p.add_argument('--multi-preview-output'); p.add_argument('--pose-init-dir'); p.add_argument('--output-dir'); p.add_argument('--initial-scale', type=float, default=0.0)\n"
                 "args,_=p.parse_known_args()\n"
                 "open(args.output_ply,'w').write('ply\\nformat ascii 1.0\\nelement vertex 1\\nproperty float x\\nproperty float y\\nproperty float z\\nproperty float f_dc_0\\nproperty float f_dc_1\\nproperty float f_dc_2\\nproperty float opacity\\nproperty float scale_0\\nproperty float scale_1\\nproperty float scale_2\\nproperty float rot_0\\nproperty float rot_1\\nproperty float rot_2\\nproperty float rot_3\\nend_header\\n0 0 0 0 0 0 1 0 0 0 1 0 0 0\\n')\n"
-                "open(args.metrics_output,'w').write(json.dumps({'trained_gaussian_count':1,'max_steps':3,'final_preview_psnr':12.3}))\n",
+                "open(args.metrics_output,'w').write(json.dumps({'trained_gaussian_count':1,'max_steps':3,'final_preview_psnr':12.3,'initial_scale_arg':args.initial_scale}))\n",
                 encoding="utf-8",
             )
             manifest = run_rgbd_optimized(
@@ -291,12 +291,15 @@ class ProductTests(unittest.TestCase):
                     gsplat_max_points=100,
                     gsplat_target_gaussians=10,
                     gsplat_dense_image_points_per_frame=0,
+                    gsplat_initial_scale=0.006,
                 )
             )
             self.assertFalse(manifest["dry_run"])
             viewer_manifest = json.loads((root / "out" / "viewer" / "viewer_manifest.json").read_text(encoding="utf-8"))
             self.assertTrue(viewer_manifest["layers"]["spark_3dgs"]["available"])
             self.assertEqual(viewer_manifest["metrics"]["gsplat_trained_gaussian_count"], 1)
+            metrics = json.loads((root / "out" / "gsplat_training" / "pose_init_training_metrics.json").read_text(encoding="utf-8"))
+            self.assertEqual(metrics["initial_scale_arg"], 0.006)
 
     def test_fastapi_job_control_and_download(self) -> None:
         try:

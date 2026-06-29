@@ -59,6 +59,7 @@ function collectParams(){
     gsplat_max_points:numberValue('gsplatMaxPoints'),
     gsplat_target_gaussians:numberValue('gsplatTargetGaussians'),
     gsplat_dense_image_points_per_frame:numberValue('gsplatDensePoints'),
+    gsplat_initial_scale:numberValue('gsplatInitialScale'),
     metadata_pose_convention:textValue('metadataPoseConvention'),
     trained_ply:textValue('trainedPly'),
     training_metrics:textValue('trainingMetrics'),
