@@ -4,7 +4,7 @@ document.querySelectorAll('aside button').forEach(btn=>btn.onclick=()=>activateT
 async function api(path,opts){const r=await fetch(path,opts);if(!r.ok)throw new Error(await r.text());return r.headers.get('content-type')?.includes('json')?r.json():r.text()}
 async function refresh(){
   datasets=await api('/api/datasets');jobs=await api('/api/jobs');
-  $('datasetsList').innerHTML=datasets.map(d=>`<div class=card><b>${d.name}</b><p class=muted>${d.path}</p><p>RGB ${d.scan.image_count} | Depth ${d.scan.depth_count} | Video ${d.scan.video_count}</p><p>真实pose: ${d.scan.has_pose?'存在':'不存在'} | pose来源: ${d.scan.pose_source}</p><p class="risk risk-${d.scan.photo_risk}">照片级风险: ${d.scan.photo_risk}</p></div>`).join('');
+  $('datasetsList').innerHTML=datasets.map(d=>`<div class=card><b>${d.name}</b><p class=muted>${d.path}</p><p>RGB ${d.scan.image_count} | Depth ${d.scan.depth_count} | Video ${d.scan.video_count}</p><p>真实pose: ${d.scan.has_pose?'存在':'不存在'} | pose来源: ${d.scan.pose_source}</p><p class="risk risk-${d.scan.photo_risk}">照片级风险: ${d.scan.photo_risk}</p><div class=actions><button onclick="exportExrRgbd('${d.id}')">导出 EXR_RGBD</button></div></div>`).join('');
   $('datasetSelect').innerHTML=datasets.map(d=>`<option value="${d.id}">${d.name}</option>`).join('');
   $('jobsList').innerHTML=jobs.map(jobCard).join('');
 }
@@ -33,6 +33,7 @@ async function showLogs(id){$('jobLogs').textContent=await api(`/api/jobs/${id}/
 async function cancelJob(id){await api(`/api/jobs/${id}/cancel`,{method:'POST'});await refresh();await showLogs(id)}
 async function retryJob(id){const j=await api(`/api/jobs/${id}/retry`,{method:'POST'});await refresh();await showLogs(j.id)}
 function downloadJob(id){window.open(`/api/jobs/${id}/download`,'_blank')}
+function exportExrRgbd(id){window.open(`/api/datasets/${id}/export-exr-rgbd`,'_blank')}
 function jobCard(j){
   const canOpen=j.status==='succeeded';
   const canCancel=j.status==='queued'||j.status==='running';

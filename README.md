@@ -86,7 +86,7 @@ http://127.0.0.1:18124/
 
 Web UI 默认中文，包含这些 tab：
 
-- `数据集`：上传 zip/video/RGBD 目录，或导入服务器本地路径。
+- `数据集`：上传 zip/video/RGBD 目录、导入服务器本地路径，并支持导出 `EXR_RGBD.zip`，结构为 `EXR_RGBD/rgb/*.jpg`、`EXR_RGBD/depth/*.exr`、`EXR_RGBD/metadata.json`。
 - `任务`：创建重建任务并选择参数模板。
 - `预览`：打开 Spark 3DGS、点云、COLMAP 轨迹和 mesh 图层。
 - `质检`：查看源视角 QA、指标、COLMAP 注册率和 pose 来源。

@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 from images23dgs.product.config import ProductConfig, write_default_config, load_config
-from images23dgs.product.datasets import ingest_upload, import_path_dataset, scan_dataset
+from images23dgs.product.datasets import export_exr_rgbd_package, ingest_upload, import_path_dataset, scan_dataset
 from images23dgs.product.doctor import run_doctor
 from images23dgs.product.store import ProductStore
 from images23dgs.product.worker import JobWorker
@@ -50,6 +50,27 @@ class ProductTests(unittest.TestCase):
             self.assertTrue(scan.has_intrinsics)
             self.assertEqual(scan.photo_risk, "低")
 
+    def test_scan_dataset_detects_exr_rgbd_metadata_pose(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "rgb").mkdir()
+            (root / "depth").mkdir()
+            (root / "rgb" / "0.jpg").write_bytes(b"jpg")
+            (root / "depth" / "0.exr").write_bytes(b"exr")
+            (root / "metadata.json").write_text(
+                json.dumps({"poses": [[0, 0, 0, 1, 0, 0, 0]], "K": [1, 0, 0, 0, 1, 0, 0.5, 0.5, 1], "perFrameIntrinsicCoeffs": [[1, 1, 0.5, 0.5]]}),
+                encoding="utf-8",
+            )
+
+            scan = scan_dataset(root)
+
+            self.assertEqual(scan.image_count, 1)
+            self.assertEqual(scan.depth_count, 1)
+            self.assertTrue(scan.has_pose)
+            self.assertTrue(scan.has_intrinsics)
+            self.assertEqual(scan.pose_source, "metadata")
+            self.assertEqual(scan.photo_risk, "低")
+
     def test_ingest_upload_zip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -59,6 +80,24 @@ class ProductTests(unittest.TestCase):
             dataset_dir, scan = ingest_upload(archive, root / "datasets")
             self.assertTrue(dataset_dir.is_dir())
             self.assertEqual(scan.image_count, 1)
+
+    def test_export_exr_rgbd_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            (source / "rgb").mkdir(parents=True)
+            (source / "depth").mkdir()
+            (source / "rgb" / "0.jpg").write_bytes(b"jpg")
+            (source / "depth" / "0.exr").write_bytes(b"exr")
+            (source / "metadata.json").write_text(json.dumps({"poses": [[0, 0, 0, 1, 0, 0, 0]]}), encoding="utf-8")
+
+            output = export_exr_rgbd_package(source, root / "out.zip")
+
+            with zipfile.ZipFile(output) as archive:
+                names = set(archive.namelist())
+            self.assertIn("EXR_RGBD/rgb/0.jpg", names)
+            self.assertIn("EXR_RGBD/depth/0.exr", names)
+            self.assertIn("EXR_RGBD/metadata.json", names)
 
     def test_store_and_worker_quick_preview(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -151,6 +190,40 @@ class ProductTests(unittest.TestCase):
                 self.assertEqual(client.get(f"/runs/{job['id']}/viewer/index.html").status_code, 200)
                 self.assertEqual(client.get(f"/runs/{job['id']}/viewer/viewer_manifest.json").status_code, 200)
                 self.assertEqual(client.get(f"/runs/{job['id']}/source_view_qa.html").status_code, 200)
+
+    def test_fastapi_dataset_export_exr_rgbd(self) -> None:
+        try:
+            from fastapi.testclient import TestClient
+            from images23dgs.product.server import create_app
+        except ModuleNotFoundError:
+            self.skipTest("FastAPI is not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            (source / "rgb").mkdir(parents=True)
+            (source / "depth").mkdir()
+            (source / "rgb" / "0.jpg").write_bytes(b"jpg")
+            (source / "depth" / "0.exr").write_bytes(b"exr")
+            (source / "metadata.json").write_text(json.dumps({"poses": [[0, 0, 0, 1, 0, 0, 0]]}), encoding="utf-8")
+            config = ProductConfig(app_root=root, workspace_dir=root / "workspace")
+            with TestClient(create_app(config)) as client:
+                dataset = client.post("/api/datasets/import-path", json={"path": str(source)}).json()
+                response = client.get(f"/api/datasets/{dataset['id']}/export-exr-rgbd")
+                self.assertEqual(response.status_code, 200)
+                self.assertGreater(len(response.content), 100)
+
+    def test_rgbd_dry_run_accepts_rgb_exr_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            (source / "rgb").mkdir(parents=True)
+            (source / "depth").mkdir()
+            (source / "rgb" / "0.jpg").write_bytes(b"jpg")
+            (source / "depth" / "0.exr").write_bytes(b"exr")
+            manifest = run_rgbd_optimized(RGBDOptimizeConfig(source=source, output=root / "out", dry_run=True))
+            self.assertTrue(manifest["dry_run"])
+            self.assertEqual(manifest["rgbd"]["rgb_frames"], 1)
+            self.assertEqual(manifest["rgbd"]["depth_frames"], 1)
 
     def test_rgbd_template_runs_for_real_by_default(self) -> None:
         self.assertFalse(TEMPLATES["rgbd_optimized"]["dry_run"])

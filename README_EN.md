@@ -96,7 +96,7 @@ Check the environment at any time:
 
 The web UI is Chinese by default and contains these tabs:
 
-- `数据集`: upload a zip/video/RGBD directory or import a server-local path.
+- `数据集`: upload a zip/video/RGBD directory, import a server-local path, and export `EXR_RGBD.zip` packages with `EXR_RGBD/rgb/*.jpg`, `EXR_RGBD/depth/*.exr`, and `EXR_RGBD/metadata.json`.
 - `任务`: create reconstruction jobs and choose templates.
 - `预览`: open Spark 3DGS, point cloud, COLMAP trajectory, and mesh layers.
 - `质检`: inspect source-view QA, metrics, COLMAP registration, and pose source.

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import ProductConfig, ensure_workspace, load_config
-from .datasets import import_path_dataset, ingest_upload
+from .datasets import export_exr_rgbd_package, import_path_dataset, ingest_upload
 from .doctor import run_doctor
 from .store import ProductStore
 from .worker import JobWorker, TEMPLATES
@@ -78,6 +78,18 @@ def create_app(config: ProductConfig | None = None):
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return store.create_dataset(name=dataset_dir.name, path=dataset_dir, scan=scan.to_jsonable())
+
+    @app.get("/api/datasets/{dataset_id}/export-exr-rgbd")
+    def export_dataset_exr_rgbd(dataset_id: str):
+        try:
+            dataset = store.get_dataset(dataset_id)
+            zip_path = cfg.workspace_dir / "exports" / f"{dataset['name']}_EXR_RGBD.zip"
+            export_exr_rgbd_package(Path(dataset["path"]), zip_path)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="dataset not found") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return FileResponse(zip_path, filename=zip_path.name, media_type="application/zip")
 
     @app.get("/api/jobs")
     def list_jobs() -> list[dict[str, Any]]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 import struct
 import subprocess
@@ -56,7 +57,7 @@ def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> 
 
     rgb_files, depth_files = _find_rgbd_pairs(source)
     if not rgb_files or not depth_files:
-        raise RuntimeError(f"RGBD 数据不完整，需要 images 与 depth/depth_selected/frames2: {source}")
+        raise RuntimeError(f"RGBD 数据不完整，需要 images/rgb 与 depth/depth_selected/frames2: {source}")
     if len(rgb_files) != len(depth_files):
         raise RuntimeError(f"RGB/Depth 数量不一致: rgb={len(rgb_files)}, depth={len(depth_files)}")
     logger(f"RGBD 输入: RGB {len(rgb_files)} 张, Depth {len(depth_files)} 张")
@@ -65,24 +66,33 @@ def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> 
         return _write_dry_run(config, rgb_files, depth_files)
 
     cv2, np, Image = _load_rgbd_dependencies()
+    metadata = _load_capture_metadata(source)
     first = Image.open(rgb_files[0]).convert("RGB")
     width, height = first.size
-    intrinsics = _estimate_intrinsics(width, height)
-    with Image.open(depth_files[0]) as depth_image:
-        depth_width, depth_height = depth_image.size
+    intrinsics = _metadata_intrinsics(metadata, width, height) or _estimate_intrinsics(width, height)
+    depth_width, depth_height = _depth_size(depth_files[0], cv2, Image)
     depth_intrinsics = _scale_intrinsics(intrinsics, depth_width / width, depth_height / height)
     logger(f"内参: fx={intrinsics['fx']:.3f}, fy={intrinsics['fy']:.3f}, cx={intrinsics['cx']:.3f}, cy={intrinsics['cy']:.3f}")
-
-    poses, stats = _estimate_rgbd_pnp(
-        rgb_files,
-        depth_files,
-        intrinsics=intrinsics,
-        depth_intrinsics=depth_intrinsics,
-        target_size=(width, height),
-        log=logger,
-    )
+    metadata_poses = _metadata_poses(metadata, len(rgb_files), np)
+    if metadata_poses:
+        poses = metadata_poses
+        stats = [
+            {"i": index, "name": path.name, "ok": True, "matches": 0, "obj": 0, "inliers": 0, "step": None, "pos": pose[:3, 3].round(5).tolist(), "source": "metadata"}
+            for index, (path, pose) in enumerate(zip(rgb_files, poses))
+        ]
+        logger(f"使用 metadata 真实/外部 pose: {len(poses)} 帧")
+    else:
+        poses, stats = _estimate_rgbd_pnp(
+            rgb_files,
+            depth_files,
+            intrinsics=intrinsics,
+            depth_intrinsics=depth_intrinsics,
+            target_size=(width, height),
+            log=logger,
+        )
     ok_steps = sum(1 for item in stats if item["ok"])
-    logger(f"RGBD-PnP 完成: ok_steps={ok_steps}, fail_steps={len(stats) - ok_steps}")
+    pose_source = "metadata" if metadata_poses else "RGBD-PnP估计"
+    logger(f"{pose_source} 完成: ok_steps={ok_steps}, fail_steps={len(stats) - ok_steps}")
 
     _copy_images(rgb_files, pose_dir / "images")
     _write_colmap_text(colmap_dir, rgb_files, poses, intrinsics, width, height)
@@ -149,9 +159,9 @@ def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> 
         "schema": "images23dgs.rgbd_optimized.v1",
         "source": str(source),
         "output": str(output),
-        "pose_source": "RGBD-PnP估计",
-        "real_pose": False,
-        "photo_risk": "中",
+        "pose_source": pose_source,
+        "real_pose": bool(metadata_poses),
+        "photo_risk": "低" if metadata_poses else "中",
         "rgbd": {
             "rgb_frames": len(rgb_files),
             "depth_frames": len(depth_files),
@@ -172,8 +182,13 @@ def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> 
 
 
 def _find_rgbd_pairs(source: Path) -> tuple[list[Path], list[Path]]:
-    image_dir = source / "images"
-    if not image_dir.is_dir():
+    image_dir = None
+    for name in ["images", "rgb", "color", "colors"]:
+        candidate = source / name
+        if candidate.is_dir():
+            image_dir = candidate
+            break
+    if image_dir is None:
         image_dir = source
     depth_dir = None
     for name in ["depth_selected", "depth", "depths", "frames2"]:
@@ -181,19 +196,34 @@ def _find_rgbd_pairs(source: Path) -> tuple[list[Path], list[Path]]:
         if candidate.is_dir():
             depth_dir = candidate
             break
-    rgb_files = _image_files(image_dir)
-    depth_files = _image_files(depth_dir) if depth_dir else []
+    rgb_files = _rgb_files(image_dir)
+    depth_files = _depth_files(depth_dir) if depth_dir else []
+    common = {p.stem for p in rgb_files} & {p.stem for p in depth_files}
+    if common:
+        rgb_files = [p for p in rgb_files if p.stem in common]
+        depth_files = [p for p in depth_files if p.stem in common]
     return rgb_files, depth_files
 
 
-def _image_files(path: Path | None) -> list[Path]:
+def _rgb_files(path: Path | None) -> list[Path]:
     if path is None:
         return []
-    return sorted([p for p in path.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg"}])
+    return sorted([p for p in path.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg"}], key=_frame_sort_key)
+
+
+def _depth_files(path: Path | None) -> list[Path]:
+    if path is None:
+        return []
+    return sorted([p for p in path.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".npy", ".exr"}], key=_frame_sort_key)
+
+
+def _frame_sort_key(path: Path) -> tuple[int, int | str]:
+    return (0, int(path.stem)) if path.stem.isdigit() else (1, path.name)
 
 
 def _load_rgbd_dependencies():
     try:
+        os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
         import cv2
         import numpy as np
         from PIL import Image
@@ -214,6 +244,112 @@ def _estimate_intrinsics(width: int, height: int) -> dict[str, float]:
 
 def _scale_intrinsics(intrinsics: dict[str, float], sx: float, sy: float) -> dict[str, float]:
     return {"fx": intrinsics["fx"] * sx, "fy": intrinsics["fy"] * sy, "cx": intrinsics["cx"] * sx, "cy": intrinsics["cy"] * sy}
+
+
+def _load_capture_metadata(source: Path) -> dict[str, Any]:
+    path = source / "metadata.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _metadata_intrinsics(metadata: dict[str, Any], width: int, height: int) -> dict[str, float] | None:
+    coeffs = metadata.get("perFrameIntrinsicCoeffs")
+    if isinstance(coeffs, list) and coeffs and isinstance(coeffs[0], list) and len(coeffs[0]) >= 4:
+        fx, fy, cx, cy = coeffs[0][:4]
+        return {"fx": float(fx), "fy": float(fy), "cx": float(cx), "cy": float(cy)}
+    matrix = metadata.get("K")
+    if isinstance(matrix, list) and len(matrix) >= 9:
+        return {"fx": float(matrix[0]), "fy": float(matrix[4]), "cx": float(matrix[6]), "cy": float(matrix[7])}
+    for key in ["intrinsics", "camera_intrinsics"]:
+        value = metadata.get(key)
+        if isinstance(value, dict) and all(name in value for name in ["fx", "fy", "cx", "cy"]):
+            return {"fx": float(value["fx"]), "fy": float(value["fy"]), "cx": float(value["cx"]), "cy": float(value["cy"])}
+    return None
+
+
+def _metadata_poses(metadata: dict[str, Any], frame_count: int, np) -> list[Any]:
+    poses = metadata.get("poses")
+    if not isinstance(poses, list) or len(poses) < frame_count:
+        return []
+    matrices = []
+    for item in poses[:frame_count]:
+        if not isinstance(item, list):
+            return []
+        if len(item) == 16:
+            matrices.append(np.asarray(item, dtype=np.float64).reshape(4, 4))
+            continue
+        if len(item) >= 7:
+            qx, qy, qz, qw, tx, ty, tz = [float(x) for x in item[:7]]
+            matrices.append(_quat_xyzw_to_matrix(qx, qy, qz, qw, tx, ty, tz, np))
+            continue
+        return []
+    return matrices
+
+
+def _quat_xyzw_to_matrix(qx: float, qy: float, qz: float, qw: float, tx: float, ty: float, tz: float, np):
+    quat = np.asarray([qx, qy, qz, qw], dtype=np.float64)
+    norm = np.linalg.norm(quat)
+    if norm == 0:
+        rotation = np.eye(3, dtype=np.float64)
+    else:
+        qx, qy, qz, qw = (quat / norm).tolist()
+        rotation = np.asarray(
+            [
+                [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+                [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+                [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+            ],
+            dtype=np.float64,
+        )
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, :3] = rotation
+    transform[:3, 3] = [tx, ty, tz]
+    return transform
+
+
+def _depth_size(path: Path, cv2, Image) -> tuple[int, int]:
+    if path.suffix.lower() == ".exr":
+        depth = _read_depth_meters(path, cv2, None)
+        return int(depth.shape[1]), int(depth.shape[0])
+    if path.suffix.lower() == ".npy":
+        depth = _read_depth_meters(path, cv2, None)
+        return int(depth.shape[1]), int(depth.shape[0])
+    with Image.open(path) as depth_image:
+        return depth_image.size
+
+
+def _read_depth_meters(path: Path, cv2, np):
+    suffix = path.suffix.lower()
+    if suffix == ".npy":
+        import numpy as _np
+
+        depth = _np.asarray(_np.load(path), dtype=_np.float32)
+    elif suffix == ".exr":
+        depth = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        if depth is None:
+            raise RuntimeError(f"无法读取 EXR depth: {path}")
+        if depth.ndim == 3:
+            counts = [(depth[:, :, channel] > 0).sum() for channel in range(depth.shape[2])]
+            depth = depth[:, :, int(max(range(depth.shape[2]), key=lambda channel: counts[channel]))]
+        import numpy as _np
+
+        depth = _np.asarray(depth, dtype=_np.float32)
+    else:
+        from PIL import Image as _Image
+        import numpy as _np
+
+        depth = _np.asarray(_Image.open(path), dtype=_np.float32)
+    if depth.ndim == 3:
+        depth = depth[:, :, 0]
+    finite = depth[depth > 0]
+    if finite.size and float(finite.max()) > 20.0:
+        depth = depth * 0.001
+    return depth
 
 
 def _estimate_rgbd_pnp(
@@ -238,7 +374,7 @@ def _estimate_rgbd_pnp(
     last_kp = last_des = last_depth = None
     for index, (rgb, depth) in enumerate(zip(rgb_files, depth_files)):
         gray = cv2.imread(str(rgb), cv2.IMREAD_GRAYSCALE)
-        dep = np.asarray(Image.open(depth)).astype(np.float32) * 0.001
+        dep = _read_depth_meters(depth, cv2, np)
         kp, des = orb.detectAndCompute(gray, None)
         if index == 0:
             last_kp, last_des, last_depth = kp, des, dep
@@ -325,10 +461,9 @@ def _fuse_rgbd_points(
     keep_every: int,
     log: LogFn,
 ):
-    _cv2, np, Image = _load_rgbd_dependencies()
+    cv2, np, Image = _load_rgbd_dependencies()
     width, height = target_size
-    with Image.open(depth_files[0]) as depth_image:
-        depth_width, depth_height = depth_image.size
+    depth_width, depth_height = _depth_size(depth_files[0], cv2, Image)
     ys = np.arange(0, depth_height, stride, dtype=np.float64)
     xs = np.arange(0, depth_width, stride, dtype=np.float64)
     xx, yy = np.meshgrid(xs, ys)
@@ -338,7 +473,7 @@ def _fuse_rgbd_points(
     colors = []
     for index, (rgb_path, depth_path) in enumerate(zip(rgb_files, depth_files)):
         rgb = np.asarray(Image.open(rgb_path).convert("RGB"))
-        dep = np.asarray(Image.open(depth_path)).astype(np.float64) * 0.001
+        dep = _read_depth_meters(depth_path, cv2, np).astype(np.float64)
         z = dep[flat_y.astype(np.int32), flat_x.astype(np.int32)]
         mask = (z > 0.35) & (z < 5.5)
         if not np.any(mask):
