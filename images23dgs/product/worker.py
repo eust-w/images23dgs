@@ -100,6 +100,7 @@ class JobWorker:
                     gsplat_image_max_size=int(params.get("gsplat_image_max_size", 448)),
                     gsplat_max_points=int(params.get("gsplat_max_points", 80_000)),
                     gsplat_target_gaussians=int(params.get("gsplat_target_gaussians", 50_000)),
+                    gsplat_dense_image_points_per_frame=int(params.get("gsplat_dense_image_points_per_frame", 0)),
                     gsplat_device=str(params.get("gsplat_device", "cuda")),
                     dry_run=dry_run,
                 ),

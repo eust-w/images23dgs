@@ -38,6 +38,7 @@ class RGBDOptimizeConfig:
     gsplat_image_max_size: int = 448
     gsplat_max_points: int = 80_000
     gsplat_target_gaussians: int = 50_000
+    gsplat_dense_image_points_per_frame: int = 0
     gsplat_device: str = "cuda"
     dry_run: bool = False
 
@@ -693,6 +694,8 @@ def _run_or_resolve_training(config: RGBDOptimizeConfig, pose_dir: Path, source:
             str(config.gsplat_max_points),
             "--target-gaussians",
             str(config.gsplat_target_gaussians),
+            "--dense-image-points-per-frame",
+            str(config.gsplat_dense_image_points_per_frame),
             "--device",
             config.gsplat_device,
         ]

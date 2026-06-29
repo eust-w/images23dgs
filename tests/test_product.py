@@ -265,6 +265,7 @@ class ProductTests(unittest.TestCase):
                     gsplat_max_frames=1,
                     gsplat_max_points=100,
                     gsplat_target_gaussians=10,
+                    gsplat_dense_image_points_per_frame=0,
                 )
             )
             self.assertFalse(manifest["dry_run"])
