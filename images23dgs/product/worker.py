@@ -102,6 +102,7 @@ class JobWorker:
                     gsplat_target_gaussians=int(params.get("gsplat_target_gaussians", 50_000)),
                     gsplat_dense_image_points_per_frame=int(params.get("gsplat_dense_image_points_per_frame", 0)),
                     gsplat_device=str(params.get("gsplat_device", "cuda")),
+                    metadata_pose_convention=str(params.get("metadata_pose_convention", "auto")),
                     dry_run=dry_run,
                 ),
                 log=lambda message: _append_log(log_path, message),

@@ -48,6 +48,7 @@
         <label>ArtiFixer anchors <input id="artifixerAnchors" type="number" min="0" placeholder="自动"></label>
         <label>ArtiFixer steps <input id="artifixerSteps" type="number" min="100" value="10000"></label>
         <label>RGBD 点数上限 <input id="maxPointCount" type="number" min="10000" step="10000" value="850000"></label>
+        <label>metadata pose约定 <select id="metadataPoseConvention"><option value="auto">自动</option><option value="arkit_to_cv">ARKit/iPhone 转 gsplat</option><option value="none">不转换</option></select></label>
         <label><input id="trainGsplat" type="checkbox"> 从零训练 3DGS</label>
         <label>训练 steps <input id="gsplatSteps" type="number" min="1" value="200"></label>
         <label>训练帧数 <input id="gsplatFrames" type="number" min="1" value="16"></label>

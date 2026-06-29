@@ -40,6 +40,7 @@ class RGBDOptimizeConfig:
     gsplat_target_gaussians: int = 50_000
     gsplat_dense_image_points_per_frame: int = 0
     gsplat_device: str = "cuda"
+    metadata_pose_convention: str = "auto"
     dry_run: bool = False
 
 
@@ -75,13 +76,22 @@ def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> 
     depth_intrinsics = _scale_intrinsics(intrinsics, depth_width / width, depth_height / height)
     logger(f"内参: fx={intrinsics['fx']:.3f}, fy={intrinsics['fy']:.3f}, cx={intrinsics['cx']:.3f}, cy={intrinsics['cy']:.3f}")
     metadata_poses = _metadata_poses(metadata, len(rgb_files), np)
+    pose_convention = "rgbd_pnp"
+    pose_transform_note = None
     if metadata_poses:
-        poses = metadata_poses
+        conversion, pose_convention, pose_transform_note = _metadata_pose_coordinate_conversion(
+            metadata,
+            config.metadata_pose_convention,
+            np,
+        )
+        poses = [pose @ conversion for pose in metadata_poses] if conversion is not None else metadata_poses
         stats = [
-            {"i": index, "name": path.name, "ok": True, "matches": 0, "obj": 0, "inliers": 0, "step": None, "pos": pose[:3, 3].round(5).tolist(), "source": "metadata"}
+            {"i": index, "name": path.name, "ok": True, "matches": 0, "obj": 0, "inliers": 0, "step": None, "pos": pose[:3, 3].round(5).tolist(), "source": pose_convention}
             for index, (path, pose) in enumerate(zip(rgb_files, poses))
         ]
-        logger(f"使用 metadata 真实/外部 pose: {len(poses)} 帧")
+        logger(f"使用 metadata 真实/外部 pose: {len(poses)} 帧, 坐标约定={pose_convention}")
+        if pose_transform_note:
+            logger(f"pose 坐标转换: {pose_transform_note}")
     else:
         poses, stats = _estimate_rgbd_pnp(
             rgb_files,
@@ -170,6 +180,8 @@ def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> 
             "fail_steps": len(stats) - ok_steps,
             "pose_dir": str(pose_dir),
             "point_cloud": str(point_cloud),
+            "pose_coordinate_convention": pose_convention,
+            "pose_coordinate_transform": pose_transform_note,
         },
         "training": trained,
         "copied_training_assets": copied_training,
@@ -290,6 +302,33 @@ def _metadata_poses(metadata: dict[str, Any], frame_count: int, np) -> list[Any]
             continue
         return []
     return matrices
+
+
+def _metadata_pose_coordinate_conversion(metadata: dict[str, Any], convention: str, np) -> tuple[Any | None, str, str | None]:
+    normalized = (convention or "auto").strip().lower().replace("-", "_")
+    if normalized in {"none", "opencv", "cv", "gsplat", "open_cv"}:
+        return None, "metadata_opencv", None
+    if normalized in {"arkit", "arkit_to_cv", "arkit_to_opencv", "ios", "iphone"}:
+        return _arkit_to_opencv_camera_basis(np), "metadata_arkit_to_cv", "camera basis diag(1,-1,-1): ARKit -Z/Y-up to OpenCV/gsplat +Z/Y-down"
+    if normalized == "auto" and _looks_like_arkit_rgbd_metadata(metadata):
+        return _arkit_to_opencv_camera_basis(np), "metadata_arkit_to_cv_auto", "auto-detected EXR_RGBD/ARKit metadata; camera basis diag(1,-1,-1)"
+    return None, "metadata_auto_no_conversion", None
+
+
+def _looks_like_arkit_rgbd_metadata(metadata: dict[str, Any]) -> bool:
+    poses = metadata.get("poses")
+    has_pose_quat = isinstance(poses, list) and bool(poses) and isinstance(poses[0], list) and len(poses[0]) >= 7
+    return bool(
+        has_pose_quat
+        and isinstance(metadata.get("perFrameIntrinsicCoeffs"), list)
+        and "dw" in metadata
+        and "dh" in metadata
+        and ("initPose" in metadata or "frameTimestamps" in metadata)
+    )
+
+
+def _arkit_to_opencv_camera_basis(np):
+    return np.diag([1.0, -1.0, -1.0, 1.0])
 
 
 def _quat_xyzw_to_matrix(qx: float, qy: float, qz: float, qw: float, tx: float, ty: float, tz: float, np):

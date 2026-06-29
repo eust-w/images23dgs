@@ -14,7 +14,7 @@ from images23dgs.product.doctor import run_doctor
 from images23dgs.product.store import ProductStore
 from images23dgs.product.worker import JobWorker
 from images23dgs.product.worker import TEMPLATES
-from images23dgs.rgbd import RGBDOptimizeConfig, run_rgbd_optimized
+from images23dgs.rgbd import RGBDOptimizeConfig, _metadata_pose_coordinate_conversion, run_rgbd_optimized
 
 
 class ProductTests(unittest.TestCase):
@@ -70,6 +70,31 @@ class ProductTests(unittest.TestCase):
             self.assertTrue(scan.has_intrinsics)
             self.assertEqual(scan.pose_source, "metadata")
             self.assertEqual(scan.photo_risk, "低")
+
+    def test_metadata_pose_auto_converts_arkit_exr_rgbd(self) -> None:
+        try:
+            import numpy as np
+        except ModuleNotFoundError:
+            self.skipTest("numpy is not installed")
+
+        metadata = {
+            "poses": [[0, 0, 0, 1, 0, 0, 0]],
+            "perFrameIntrinsicCoeffs": [[1, 1, 0.5, 0.5]],
+            "dw": 192,
+            "dh": 256,
+            "initPose": [0, 0, 0, 1, 0, 0, 0],
+        }
+
+        conversion, convention, note = _metadata_pose_coordinate_conversion(metadata, "auto", np)
+        self.assertEqual(convention, "metadata_arkit_to_cv_auto")
+        self.assertIsNotNone(conversion)
+        self.assertEqual(conversion.tolist(), [[1.0, 0.0, 0.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, -1.0, 0.0], [0.0, 0.0, 0.0, 1.0]])
+        self.assertIn("diag", note)
+
+        no_conversion, convention, note = _metadata_pose_coordinate_conversion(metadata, "none", np)
+        self.assertIsNone(no_conversion)
+        self.assertEqual(convention, "metadata_opencv")
+        self.assertIsNone(note)
 
     def test_ingest_upload_zip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
