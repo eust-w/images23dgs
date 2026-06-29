@@ -185,6 +185,17 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
         lod.tick(camera);
         lod.start();
         tickers.push(() => lod.tick(camera));
+        const warmupUntil = performance.now() + 12000;
+        const warmup = () => {
+          lod.tick(camera);
+          viewer.render();
+          if (performance.now() < warmupUntil) requestAnimationFrame(warmup);
+        };
+        requestAnimationFrame(warmup);
+        setStatus(`Aholo LOD 正在流式加载：${Number(layer.gaussians || meta.counts || 0).toLocaleString()} 个高斯。`);
+        await lod.onFinishSchedule();
+        lod.tick(camera);
+        viewer.render();
         setStatus(`Aholo LOD 已加载：${Number(layer.gaussians || meta.counts || 0).toLocaleString()} 个高斯。`);
       } else {
         const bytes = await fetchBytes(url, layer.file);
