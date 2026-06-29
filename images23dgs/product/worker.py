@@ -103,6 +103,8 @@ class JobWorker:
                     gsplat_dense_image_points_per_frame=int(params.get("gsplat_dense_image_points_per_frame", 0)),
                     gsplat_initial_scale=float(params.get("gsplat_initial_scale", 0.0)),
                     gsplat_device=str(params.get("gsplat_device", "cuda")),
+                    aholo_splat_transform_binary=_optional_path(params.get("aholo_splat_transform_binary")) or self.config.aholo_splat_transform_binary,
+                    aholo_convert_format=str(params.get("aholo_convert_format", self.config.aholo_convert_format)),
                     metadata_pose_convention=str(params.get("metadata_pose_convention", "auto")),
                     dry_run=dry_run,
                 ),

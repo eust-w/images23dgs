@@ -124,9 +124,11 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
       camera = new PerspectiveCamera(60, Math.max(0.1, container.clientWidth / Math.max(1, container.clientHeight)), 0.01, 2000);
 
       const bytes = await fetchBytes(url, layer.file);
-      setStatus(`正在解析 ${Math.round(bytes.byteLength / 1048576)} MB 3DGS PLY...`);
+      setStatus(`正在解析 ${Math.round(bytes.byteLength / 1048576)} MB 3DGS...`);
       const fileType = SplatLoader.detectSplatFileType?.(url, bytes) ?? SplatLoader.SplatFileType.PLY;
-      const data = await SplatLoader.parseSplatData(fileType, bytes, SplatLoader.SplatPackType.SuperCompressed);
+      const ext = new URL(url).pathname.split(".").pop().toLowerCase();
+      const packType = ext === "sog" ? SplatLoader.SplatPackType.Compressed : SplatLoader.SplatPackType.SuperCompressed;
+      const data = await SplatLoader.parseSplatData(fileType, bytes, packType);
       const splat = await SplatUtils.createSplat(data);
 
       viewer.getScene().add(splat);
@@ -187,6 +189,8 @@ class RGBDOptimizeConfig:
     gsplat_dense_image_points_per_frame: int = 0
     gsplat_initial_scale: float = 0.0
     gsplat_device: str = "cuda"
+    aholo_splat_transform_binary: Path | None = None
+    aholo_convert_format: str = "spz"
     metadata_pose_convention: str = "auto"
     dry_run: bool = False
 
@@ -274,6 +278,8 @@ def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> 
 
     trained = _run_or_resolve_training(config, pose_dir, source, logger)
     spark_asset = None
+    aholo_asset = None
+    aholo_transform: dict[str, Any] = {"attempted": False, "ok": False}
     ply_info: dict[str, Any] = {}
     if trained.get("ply"):
         source_ply = Path(trained["ply"])
@@ -283,6 +289,7 @@ def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> 
         spark_asset = _prepare_spark_ply(copied, viewer)
         ply_info = read_ply_header(spark_asset or copied).to_jsonable()
         logger(f"Spark 3DGS 已接入: {spark_asset or copied}")
+        aholo_asset, aholo_transform = _prepare_aholo_asset(config, spark_asset or copied, assets, logger)
     copied_training = _copy_training_previews(trained, assets)
 
     trajectory = _trajectory_bounds(poses)
@@ -294,6 +301,8 @@ def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> 
         point_cloud=point_cloud,
         colmap_dir=colmap_dir,
         spark_asset=spark_asset,
+        aholo_asset=aholo_asset,
+        aholo_transform=aholo_transform,
         spark_info=ply_info,
         metrics={
             "rgb_frames": len(rgb_files),
@@ -307,12 +316,13 @@ def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> 
             "point_bbox_min": point_bounds[0],
             "point_bbox_max": point_bounds[1],
             "gsplat_metrics": str(trained["metrics"]) if trained.get("metrics") else None,
+            "aholo_transform": aholo_transform,
             **_extract_training_metrics(training_metrics),
         },
     )
     (viewer / "viewer_manifest.json").write_text(json.dumps(viewer_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (viewer / "index.html").write_text(VIEWER_HTML, encoding="utf-8")
-    aholo_viewer = _write_aholo_viewer(viewer, spark_asset, ply_info)
+    aholo_viewer = _write_aholo_viewer(viewer, aholo_asset or spark_asset, ply_info)
 
     run_manifest = {
         "schema": "images23dgs.rgbd_optimized.v1",
@@ -926,9 +936,12 @@ def _build_viewer_manifest(
     point_cloud: Path,
     colmap_dir: Path,
     spark_asset: Path | None,
+    aholo_asset: Path | None,
+    aholo_transform: dict[str, Any],
     spark_info: dict[str, Any],
     metrics: dict[str, Any],
 ) -> dict[str, Any]:
+    aholo_source = aholo_asset or spark_asset
     return {
         "schema": "images23dgs.layered_viewer.v1",
         "title": config.scene_name,
@@ -944,11 +957,14 @@ def _build_viewer_manifest(
             },
             "aholo_3dgs": {
                 "label": "Aholo 3DGS high-performance preview",
-                "available": bool(spark_asset and spark_asset.is_file() and spark_info.get("has_3dgs_fields")),
-                "viewer": "aholo/index.html" if spark_asset and spark_asset.is_file() and spark_info.get("has_3dgs_fields") else None,
-                "file": _relative(viewer, spark_asset),
+                "available": bool(aholo_source and aholo_source.is_file() and spark_info.get("has_3dgs_fields")),
+                "viewer": "aholo/index.html" if aholo_source and aholo_source.is_file() and spark_info.get("has_3dgs_fields") else None,
+                "file": _relative(viewer, aholo_source),
+                "fallback_file": _relative(viewer, spark_asset),
                 "gaussians": spark_info.get("vertex_count"),
-                "source": "Aholo viewer loads the same trained gsplat PLY; SOG/LOD conversion can be added with @manycore/aholo-splat-transform when Node is available.",
+                "format": (aholo_source.suffix.lower().lstrip(".") if aholo_source else None),
+                "transform": aholo_transform,
+                "source": "Aholo viewer uses converted SPZ/SOG/LOD when available, otherwise falls back to the trained gsplat PLY.",
             },
             "point_cloud": {
                 "label": "RGBD fused point cloud using PnP odometry",
@@ -979,6 +995,54 @@ def _build_viewer_manifest(
             "COLMAP layer is a text-model compatibility layer backed by RGBD-PnP poses.",
         ],
 }
+
+
+def _prepare_aholo_asset(config: RGBDOptimizeConfig, source_ply: Path, assets: Path, log: LogFn) -> tuple[Path | None, dict[str, Any]]:
+    fmt = config.aholo_convert_format.lower().lstrip(".")
+    result: dict[str, Any] = {
+        "attempted": False,
+        "ok": False,
+        "format": fmt,
+        "source": str(source_ply),
+        "output": None,
+        "command": None,
+        "summary": None,
+    }
+    if fmt not in {"spz", "sog", "splat", "ply"}:
+        result["summary"] = f"unsupported format:{fmt}"
+        log(f"Aholo 转换跳过: {result['summary']}")
+        return None, result
+    if fmt == "ply":
+        result.update({"ok": True, "output": str(source_ply), "summary": "using ply directly"})
+        return source_ply, result
+    binary = config.aholo_splat_transform_binary
+    if binary is None:
+        result["summary"] = "missing:splat-transform"
+        log("Aholo 转换跳过: 未配置 splat-transform")
+        return None, result
+    if not (binary.exists() or shutil.which(str(binary))):
+        result["summary"] = f"missing:{binary}"
+        log(f"Aholo 转换跳过: {result['summary']}")
+        return None, result
+    output = assets / f"{source_ply.stem}.{fmt}"
+    command = [str(binary), "create", str(source_ply), str(output)]
+    result.update({"attempted": True, "output": str(output), "command": command})
+    log(f"Aholo 转换开始: {' '.join(command)}")
+    try:
+        completed = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=1800)
+    except Exception as exc:
+        result["summary"] = str(exc)
+        log(f"Aholo 转换失败: {exc}")
+        return None, result
+    output_text = (completed.stdout or "").strip()
+    result["summary"] = output_text.splitlines()[-1] if output_text else f"exit={completed.returncode}"
+    if completed.returncode != 0 or not output.is_file():
+        log(f"Aholo 转换失败: {result['summary']}")
+        return None, result
+    result["ok"] = True
+    result["size"] = output.stat().st_size
+    log(f"Aholo 转换完成: {output} ({output.stat().st_size / 1024**2:.1f} MB)")
+    return output, result
 
 
 def _write_aholo_viewer(viewer: Path, spark_asset: Path | None, spark_info: dict[str, Any]) -> Path | None:

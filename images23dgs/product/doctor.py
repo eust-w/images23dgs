@@ -13,6 +13,9 @@ def run_doctor(config: ProductConfig) -> dict[str, Any]:
     ensure_workspace(config)
     colmap = _command_probe([str(config.colmap_binary), "-h"])
     gsplat = _command_probe([str(config.gsplat_python), "-c", "import torch; from gsplat import rasterization; print('torch+gsplat rasterization ok')"])
+    node_binary = _node_binary_for(config)
+    node = _command_probe([str(node_binary), "--version"]) if node_binary else {"ok": False, "summary": "missing:node"}
+    aholo = _command_probe([str(config.aholo_splat_transform_binary), "--version"])
     nvidia = _command_probe(["nvidia-smi", "--query-gpu=name,memory.total,memory.used", "--format=csv,noheader"])
     real2sim_ok = (config.real2sim_root / "real2sim").exists() or (config.real2sim_root / "real2sim_video_motrix_scene.py").exists()
     disk = shutil.disk_usage(config.workspace_dir)
@@ -23,6 +26,8 @@ def run_doctor(config: ProductConfig) -> dict[str, Any]:
             "real2sim_root": str(config.real2sim_root),
             "gsplat_python": str(config.gsplat_python),
             "gsplat_train_script": str(config.gsplat_train_script),
+            "aholo_splat_transform_binary": str(config.aholo_splat_transform_binary),
+            "aholo_convert_format": config.aholo_convert_format,
             "discoverse_root": str(config.discoverse_root),
             "colmap_binary": str(config.colmap_binary),
             "host": config.host,
@@ -44,6 +49,17 @@ def run_doctor(config: ProductConfig) -> dict[str, Any]:
                 "python": str(config.gsplat_python),
                 "script": str(config.gsplat_train_script),
                 "summary": gsplat["summary"],
+            },
+            "node": {
+                "ok": node["ok"] and _node_major_ok(str(node["summary"])),
+                "path": str(node_binary) if node_binary else None,
+                "summary": node["summary"],
+            },
+            "aholo_splat_transform": {
+                "ok": aholo["ok"],
+                "path": str(config.aholo_splat_transform_binary),
+                "format": config.aholo_convert_format,
+                "summary": aholo["summary"],
             },
             "discoverse": {
                 "ok": config.discoverse_root.exists(),
@@ -85,6 +101,24 @@ def _command_probe(command: list[str]) -> dict[str, object]:
         return {"ok": False, "summary": str(exc)}
     first = (completed.stdout or "").splitlines()[0:2]
     return {"ok": completed.returncode == 0, "summary": " | ".join(first)}
+
+
+def _node_binary_for(config: ProductConfig) -> Path | str | None:
+    bundled = config.app_root / "node" / "bin" / "node"
+    if bundled.exists():
+        return bundled
+    found = shutil.which("node")
+    return found if found else None
+
+
+def _node_major_ok(summary: str) -> bool:
+    token = summary.strip().split()[0] if summary.strip() else ""
+    if token.startswith("v"):
+        token = token[1:]
+    try:
+        return int(token.split(".", 1)[0]) >= 22
+    except ValueError:
+        return False
 
 
 def _is_writable(path: Path) -> bool:

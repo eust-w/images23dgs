@@ -167,6 +167,9 @@ class ProductTests(unittest.TestCase):
             config = load_config(path)
             report = run_doctor(config)
             self.assertIn("checks", report)
+            self.assertIn("aholo_splat_transform", report["checks"])
+            self.assertEqual(config.aholo_convert_format, "spz")
+            self.assertEqual(config.aholo_splat_transform_binary, Path(tmp) / "node" / "bin" / "splat-transform")
             self.assertEqual(config.workspace_dir, Path(tmp) / "workspace")
 
     def test_fastapi_health_when_dependency_available(self) -> None:
@@ -278,6 +281,14 @@ class ProductTests(unittest.TestCase):
                 "open(args.metrics_output,'w').write(json.dumps({'trained_gaussian_count':1,'max_steps':3,'final_preview_psnr':12.3,'initial_scale_arg':args.initial_scale}))\n",
                 encoding="utf-8",
             )
+            fake_transform = root / "splat-transform"
+            fake_transform.write_text(
+                "#!/usr/bin/env python3\n"
+                "import pathlib,sys\n"
+                "pathlib.Path(sys.argv[3]).write_bytes(b'spz')\n",
+                encoding="utf-8",
+            )
+            fake_transform.chmod(0o755)
             manifest = run_rgbd_optimized(
                 RGBDOptimizeConfig(
                     source=source,
@@ -292,6 +303,8 @@ class ProductTests(unittest.TestCase):
                     gsplat_target_gaussians=10,
                     gsplat_dense_image_points_per_frame=0,
                     gsplat_initial_scale=0.006,
+                    aholo_splat_transform_binary=fake_transform,
+                    aholo_convert_format="spz",
                 )
             )
             self.assertFalse(manifest["dry_run"])
@@ -299,6 +312,9 @@ class ProductTests(unittest.TestCase):
             self.assertTrue(viewer_manifest["layers"]["spark_3dgs"]["available"])
             self.assertTrue(viewer_manifest["layers"]["aholo_3dgs"]["available"])
             self.assertEqual(viewer_manifest["layers"]["aholo_3dgs"]["viewer"], "aholo/index.html")
+            self.assertEqual(viewer_manifest["layers"]["aholo_3dgs"]["format"], "spz")
+            self.assertTrue(viewer_manifest["layers"]["aholo_3dgs"]["transform"]["ok"])
+            self.assertTrue((root / "out" / "viewer" / "assets" / "pose_init_trained_scene_spark_binary.spz").is_file())
             self.assertTrue((root / "out" / "viewer" / "aholo" / "index.html").is_file())
             self.assertEqual(viewer_manifest["metrics"]["gsplat_trained_gaussian_count"], 1)
             self.assertEqual(Path(manifest["viewer"]["aholo_index_html"]), (root / "out" / "viewer" / "aholo" / "index.html").resolve())

@@ -53,9 +53,10 @@ http://127.0.0.1:18124/
 2. 从 GitHub 下载仓库源码包。
 3. 创建 `/opt/images23dgs_app/src`、`/opt/images23dgs_app/workspace` 和 Python 虚拟环境。
 4. 安装 `images23dgs[web]` 和 `uv`。
-5. 写入 `/opt/images23dgs_app/config.toml`。
-6. 执行 `images23dgs product doctor` 做环境检查。
-7. 带 `--start` 时，启动 FastAPI 后端、中文静态前端和串行任务 worker，默认监听 `0.0.0.0:18123`。
+5. 安装内置 Node.js 22 和 `@manycore/aholo-splat-transform`，用于把大 3DGS PLY 转成 Aholo 更适合加载的 `spz`。
+6. 写入 `/opt/images23dgs_app/config.toml`。
+7. 执行 `images23dgs product doctor` 做环境检查。
+8. 带 `--start` 时，启动 FastAPI 后端、中文静态前端和串行任务 worker，默认监听 `0.0.0.0:18123`。
 
 安装器支持通过这些包管理器补齐基础工具：`apt-get`、`dnf`、`yum`、`microdnf`、`zypper`、`apk`。
 
@@ -73,6 +74,7 @@ http://127.0.0.1:18124/
 - COLMAP，默认路径 `/usr/local/bin/colmap`。
 - Real2Sim checkout，默认路径 `/opt/gs_playground_real2sim_48q`。
 - gsplat 训练 Python，默认路径 `/opt/real2sim_paper_runtime/envs/anysplat/bin/python`。
+- Aholo transform，默认由安装器安装到 `/opt/images23dgs_app/node/bin/splat-transform`。
 - 可选 ArtiFixer checkout/checkpoint，用于少图场景修补。
 
 随时检查环境：
@@ -88,7 +90,7 @@ Web UI 默认中文，包含这些 tab：
 
 - `数据集`：上传 zip/video/RGBD 目录、导入服务器本地路径，并支持导出 `EXR_RGBD.zip`，结构为 `EXR_RGBD/rgb/*.jpg`、`EXR_RGBD/depth/*.exr`、`EXR_RGBD/metadata.json`。
 - `任务`：创建重建任务并选择参数模板。
-- `预览`：打开 Spark 3DGS、点云、COLMAP 轨迹和 mesh 图层。
+- `预览`：打开 Aholo 高性能 3DGS、Spark 3DGS、点云、COLMAP 轨迹和 mesh 图层。
 - `质检`：查看源视角 QA、指标、COLMAP 注册率和 pose 来源。
 - `设置`：查看路径、端口、workspace 和 doctor 检查结果。
 - `采集指南`：iPhone/ARKit 采集格式说明。
@@ -145,6 +147,12 @@ bash scripts/start_wuying.sh --check-only
 ```bash
 IMAGES23DGS_APP_ROOT=/data/images23dgs_app bash scripts/install_wuying.sh
 IMAGES23DGS_APP_ROOT=/data/images23dgs_app bash scripts/start_wuying.sh
+```
+
+跳过内置 Node/Aholo transform 安装：
+
+```bash
+IMAGES23DGS_SKIP_AHOLO_NODE=1 bash scripts/install_wuying.sh
 ```
 
 通过单文件安装器指定自定义目录：
@@ -249,6 +257,8 @@ workspace_dir = "/opt/images23dgs_app/workspace"
 real2sim_root = "/opt/gs_playground_real2sim_48q"
 gsplat_python = "/opt/real2sim_paper_runtime/envs/anysplat/bin/python"
 gsplat_train_script = "/opt/gs_playground_real2sim_48q/scripts/real2sim_pose_init_gsplat_train.py"
+aholo_splat_transform_binary = "/opt/images23dgs_app/node/bin/splat-transform"
+aholo_convert_format = "spz"
 colmap_binary = "/usr/local/bin/colmap"
 host = "0.0.0.0"
 port = 18123

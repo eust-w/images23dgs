@@ -60,9 +60,11 @@ It performs:
 3. Creates `/opt/images23dgs_app/src`, `/opt/images23dgs_app/workspace`, and a
    Python virtual environment.
 4. Installs `images23dgs[web]` and `uv`.
-5. Writes `/opt/images23dgs_app/config.toml`.
-6. Runs `images23dgs product doctor`.
-7. With `--start`, starts the FastAPI backend, static Chinese frontend, and
+5. Installs bundled Node.js 22 and `@manycore/aholo-splat-transform` for
+   converting large 3DGS PLY files to Aholo-friendly `spz`.
+6. Writes `/opt/images23dgs_app/config.toml`.
+7. Runs `images23dgs product doctor`.
+8. With `--start`, starts the FastAPI backend, static Chinese frontend, and
    serial task worker on `0.0.0.0:18123`.
 
 The installer supports these package managers for minimal base tools:
@@ -83,6 +85,8 @@ Recommended for real reconstruction/training:
 - Real2Sim checkout, default path `/opt/gs_playground_real2sim_48q`.
 - gsplat training Python, default path
   `/opt/real2sim_paper_runtime/envs/anysplat/bin/python`.
+- Aholo transform, installed by default at
+  `/opt/images23dgs_app/node/bin/splat-transform`.
 - Optional ArtiFixer checkout/checkpoint for sparse-view repair.
 
 Check the environment at any time:
@@ -98,7 +102,7 @@ The web UI is Chinese by default and contains these tabs:
 
 - `数据集`: upload a zip/video/RGBD directory, import a server-local path, and export `EXR_RGBD.zip` packages with `EXR_RGBD/rgb/*.jpg`, `EXR_RGBD/depth/*.exr`, and `EXR_RGBD/metadata.json`.
 - `任务`: create reconstruction jobs and choose templates.
-- `预览`: open Spark 3DGS, point cloud, COLMAP trajectory, and mesh layers.
+- `预览`: open Aholo high-performance 3DGS, Spark 3DGS, point cloud, COLMAP trajectory, and mesh layers.
 - `质检`: inspect source-view QA, metrics, COLMAP registration, and pose source.
 - `设置`: view paths, port, workspace, and doctor results.
 - `采集指南`: iPhone/ARKit capture format guidance.
@@ -148,6 +152,12 @@ Check only:
 
 ```bash
 bash scripts/start_wuying.sh --check-only
+```
+
+Skip bundled Node/Aholo transform installation:
+
+```bash
+IMAGES23DGS_SKIP_AHOLO_NODE=1 bash scripts/install_wuying.sh
 ```
 
 Use a custom app root:
@@ -227,6 +237,7 @@ Each run writes `viewer/index.html` and `viewer/viewer_manifest.json`.
 The viewer exposes independent layers:
 
 - Spark 3DGS visual render from a full 3DGS PLY.
+- Aholo high-performance 3DGS preview, using converted `spz` when available.
 - 3DGS point-cloud preview from Gaussian centers.
 - Collision/scene mesh preview when available.
 - COLMAP sparse points and camera trajectory.
@@ -261,6 +272,8 @@ workspace_dir = "/opt/images23dgs_app/workspace"
 real2sim_root = "/opt/gs_playground_real2sim_48q"
 gsplat_python = "/opt/real2sim_paper_runtime/envs/anysplat/bin/python"
 gsplat_train_script = "/opt/gs_playground_real2sim_48q/scripts/real2sim_pose_init_gsplat_train.py"
+aholo_splat_transform_binary = "/opt/images23dgs_app/node/bin/splat-transform"
+aholo_convert_format = "spz"
 colmap_binary = "/usr/local/bin/colmap"
 host = "0.0.0.0"
 port = 18123

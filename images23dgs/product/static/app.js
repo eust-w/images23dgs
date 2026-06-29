@@ -68,6 +68,8 @@ function collectParams(){
     gsplat_target_gaussians:numberValue('gsplatTargetGaussians'),
     gsplat_dense_image_points_per_frame:numberValue('gsplatDensePoints'),
     gsplat_initial_scale:numberValue('gsplatInitialScale'),
+    aholo_convert_format:textValue('aholoConvertFormat'),
+    aholo_splat_transform_binary:textValue('aholoSplatTransform'),
     metadata_pose_convention:textValue('metadataPoseConvention'),
     trained_ply:textValue('trainedPly'),
     training_metrics:textValue('trainingMetrics'),
