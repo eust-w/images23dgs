@@ -57,7 +57,7 @@
         <label>目标高斯数 <input id="gsplatTargetGaussians" type="number" min="1000" step="1000" value="50000"></label>
         <label>稠密增广点/帧 <input id="gsplatDensePoints" type="number" min="0" step="100" value="0"></label>
         <label>高斯初始尺度 <input id="gsplatInitialScale" type="number" min="0" step="0.0005" placeholder="自动；EXR_RGBD建议0.006"></label>
-        <label>Aholo格式 <select id="aholoConvertFormat"><option value="sog">SOG</option><option value="spz">SPZ</option><option value="ply">PLY直读</option></select></label>
+        <label>Aholo格式 <select id="aholoConvertFormat"><option value="chunk-lod">Chunk LOD</option><option value="sog">SOG</option><option value="spz">SPZ</option><option value="ply">PLY直读</option></select></label>
         <label>Aholo转换器 <input id="aholoSplatTransform" placeholder="/opt/images23dgs_app/node/bin/splat-transform"></label>
         <label>已训练 3DGS PLY <input id="trainedPly" placeholder="/tmp/.../pose_init_trained_scene.ply"></label>
         <label>训练 metrics <input id="trainingMetrics" placeholder="/tmp/.../pose_init_training_metrics.json"></label>

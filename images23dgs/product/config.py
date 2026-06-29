@@ -18,7 +18,7 @@ class ProductConfig:
     gsplat_python: Path = Path("/opt/real2sim_paper_runtime/envs/anysplat/bin/python")
     gsplat_train_script: Path = Path("/opt/gs_playground_real2sim_48q/scripts/real2sim_pose_init_gsplat_train.py")
     aholo_splat_transform_binary: Path = DEFAULT_APP_ROOT / "node" / "bin" / "splat-transform"
-    aholo_convert_format: str = "sog"
+    aholo_convert_format: str = "chunk-lod"
     artifixer_root: Path | None = None
     colmap_binary: Path = Path("/usr/local/bin/colmap")
     host: str = "0.0.0.0"
@@ -61,7 +61,7 @@ def load_config(path: Path | None = None) -> ProductConfig:
         gsplat_python=Path(str(values.get("gsplat_python", "/opt/real2sim_paper_runtime/envs/anysplat/bin/python"))),
         gsplat_train_script=Path(str(values.get("gsplat_train_script", "/opt/gs_playground_real2sim_48q/scripts/real2sim_pose_init_gsplat_train.py"))),
         aholo_splat_transform_binary=Path(str(values.get("aholo_splat_transform_binary", app_root / "node" / "bin" / "splat-transform"))),
-        aholo_convert_format=str(values.get("aholo_convert_format", "sog")),
+        aholo_convert_format=str(values.get("aholo_convert_format", "chunk-lod")),
         artifixer_root=Path(str(artifixer_value)) if artifixer_value else None,
         colmap_binary=Path(str(values.get("colmap_binary", "/usr/local/bin/colmap"))),
         host=str(values.get("host", "0.0.0.0")),

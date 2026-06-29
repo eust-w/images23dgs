@@ -131,16 +131,37 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
         BackgroundMode,
         Color,
         PerspectiveCamera,
+        Scene3D,
         SplatLoader,
         SplatUtils,
+        ToneMapping,
         Vector3,
         createViewerContext,
         createViewer,
         setViewerConfig,
       } = await import("https://esm.sh/@manycore/aholo-viewer@1.5.1");
 
-      viewer = createViewer("images23dgs-aholo-viewer", container, {});
+      viewer = createViewer("images23dgs-aholo-viewer", container, { antialiasing: false });
+      const scene = new Scene3D();
       camera = new PerspectiveCamera(60, Math.max(0.1, container.clientWidth / Math.max(1, container.clientHeight)), 0.01, 2000);
+      viewer.setScene(scene);
+      viewer.setCamera(camera);
+      setViewerConfig(viewer, {
+        pixelRatio: Math.min(1, 1 / Math.max(1, window.devicePixelRatio || 1)),
+        pipeline: {
+          Background: {
+            background: { active: BackgroundMode.BasicBackground, basic: { color: new Color(0.02, 0.025, 0.03) } },
+            ground: { enabled: false },
+          },
+          Splatting: {
+            enabled: true,
+            pack: { precalculateEnabled: false, cameraRelativeEnabled: true },
+            sort: { frustumCullingEnabled: true },
+            toneMapping: { enabled: true, toneMapping: ToneMapping.Neutral },
+          },
+          TAA: { enabled: false },
+        },
+      });
 
       const tickers = [];
       if (lodUrl) {
@@ -167,36 +188,37 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
           meta,
           {
             minLevel: Math.max(0, meta.levels - 1),
-            maxBudget: 3000000,
+            maxBudget: 6000000,
             backgroundPenalty: 0.5,
             outsidePenalty: 0.4,
             behindPenalty: 0.1,
             behindTolerance: -0.2,
             behindDistanceTolerance: 2,
             hysteresisTicks: 4,
-            schedulerParallelCounts: 8,
-            schedulerExistingTaskLimit: 64,
-            schedulerMinDuration: 120,
+            schedulerParallelCounts: 99999,
+            schedulerExistingTaskLimit: 99999,
+            schedulerMinDuration: 0,
           },
           createViewerContext(viewer),
           loadResource,
         );
-        viewer.getScene().add(lod.container);
+        scene.add(lod.container);
         lod.tick(camera);
         lod.start();
-        tickers.push(() => lod.tick(camera));
-        const warmupUntil = performance.now() + 12000;
-        const warmup = () => {
+        window.images23dgsAholoDebug = { mode: "lod", meta, loaded: false, camera: null, frames: 0 };
+        tickers.push(() => {
           lod.tick(camera);
-          viewer.render();
-          if (performance.now() < warmupUntil) requestAnimationFrame(warmup);
-        };
-        requestAnimationFrame(warmup);
+          window.images23dgsAholoDebug.frames += 1;
+        });
         setStatus(`Aholo LOD 正在流式加载：${Number(layer.gaussians || meta.counts || 0).toLocaleString()} 个高斯。`);
-        await lod.onFinishSchedule();
-        lod.tick(camera);
-        viewer.render();
-        setStatus(`Aholo LOD 已加载：${Number(layer.gaussians || meta.counts || 0).toLocaleString()} 个高斯。`);
+        lod.onFinishSchedule().then(() => {
+          lod.tick(camera);
+          window.images23dgsAholoDebug.loaded = true;
+          setStatus(`Aholo LOD 已加载：${Number(layer.gaussians || meta.counts || 0).toLocaleString()} 个高斯。`);
+        }).catch(error => {
+          console.error(error);
+          setStatus(`Aholo LOD 加载失败：${error?.message || error}`, "error");
+        });
       } else {
         const bytes = await fetchBytes(url, layer.file);
         setStatus(`正在解析 ${Math.round(bytes.byteLength / 1048576)} MB 3DGS...`);
@@ -211,29 +233,20 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
         const splat = await SplatUtils.createSplat(data);
         splat.autoFreeResourceOnGpuPacked = true;
 
-        viewer.getScene().add(splat);
+        scene.add(splat);
         setStatus(`Aholo 已加载：${Number(layer.gaussians || 0).toLocaleString()} 个高斯。`);
       }
-      setViewerConfig(viewer, {
-        pixelRatio: Math.min(1, 1 / Math.max(1, window.devicePixelRatio || 1)),
-        pipeline: {
-          Background: {
-            background: { active: BackgroundMode.BasicBackground, basic: { color: new Color(0.02, 0.025, 0.03) } },
-            ground: { enabled: false },
-          },
-          Splatting: {
-            enabled: true,
-            sort: { frustumCullingEnabled: true },
-          },
-          TAA: { enabled: false },
-        },
-      });
       resetCamera(Vector3);
       const render = () => {
         for (const tick of tickers) tick();
+        camera.aspect = Math.max(0.1, container.clientWidth / Math.max(1, container.clientHeight));
+        camera.updateProjectionMatrix();
+        scene.notifySceneChange();
+        window.images23dgsAholoDebug = { ...(window.images23dgsAholoDebug || {}), camera: { position: camera.position.toArray?.() || [camera.position.x, camera.position.y, camera.position.z], target: cameraTarget, radius: cameraRadius } };
         viewer.render();
+        requestAnimationFrame(render);
       };
-      viewer.requestRenderHandler = () => requestAnimationFrame(render);
+      viewer.requestRenderHandler = () => {};
       window.addEventListener("resize", () => resetCamera(Vector3));
       document.getElementById("reset").onclick = () => resetCamera(Vector3);
       requestAnimationFrame(render);
@@ -274,7 +287,7 @@ class RGBDOptimizeConfig:
     gsplat_initial_scale: float = 0.0
     gsplat_device: str = "cuda"
     aholo_splat_transform_binary: Path | None = None
-    aholo_convert_format: str = "spz"
+    aholo_convert_format: str = "chunk-lod"
     metadata_pose_convention: str = "auto"
     dry_run: bool = False
 
@@ -1026,6 +1039,8 @@ def _build_viewer_manifest(
     metrics: dict[str, Any],
 ) -> dict[str, Any]:
     aholo_source = aholo_asset or spark_asset
+    aholo_lod_meta = aholo_asset if aholo_transform.get("format") == "chunk-lod" else None
+    aholo_file = None if aholo_lod_meta else aholo_source
     return {
         "schema": "images23dgs.layered_viewer.v1",
         "title": config.scene_name,
@@ -1043,12 +1058,13 @@ def _build_viewer_manifest(
                 "label": "Aholo 3DGS high-performance preview",
                 "available": bool(aholo_source and aholo_source.is_file() and spark_info.get("has_3dgs_fields")),
                 "viewer": "aholo/index.html" if aholo_source and aholo_source.is_file() and spark_info.get("has_3dgs_fields") else None,
-                "file": _relative(viewer, aholo_source),
+                "file": _relative(viewer, aholo_file),
+                "lod_meta": _relative(viewer, aholo_lod_meta),
                 "fallback_file": _relative(viewer, spark_asset),
                 "gaussians": spark_info.get("vertex_count"),
-                "format": (aholo_source.suffix.lower().lstrip(".") if aholo_source else None),
+                "format": "chunk-lod" if aholo_lod_meta else (aholo_source.suffix.lower().lstrip(".") if aholo_source else None),
                 "transform": aholo_transform,
-                "source": "Aholo viewer uses converted SPZ/SOG/LOD when available, otherwise falls back to the trained gsplat PLY.",
+                "source": "Aholo viewer uses generated chunk LOD when available, otherwise falls back to converted SPZ/SOG or trained gsplat PLY.",
             },
             "point_cloud": {
                 "label": "RGBD fused point cloud using PnP odometry",
@@ -1092,7 +1108,10 @@ def _prepare_aholo_asset(config: RGBDOptimizeConfig, source_ply: Path, assets: P
         "command": None,
         "summary": None,
     }
-    if fmt not in {"spz", "sog", "splat", "ply"}:
+    if fmt in {"lod", "chunklod", "chunk_lod"}:
+        fmt = "chunk-lod"
+        result["format"] = fmt
+    if fmt not in {"chunk-lod", "spz", "sog", "splat", "ply"}:
         result["summary"] = f"unsupported format:{fmt}"
         log(f"Aholo 转换跳过: {result['summary']}")
         return None, result
@@ -1108,8 +1127,16 @@ def _prepare_aholo_asset(config: RGBDOptimizeConfig, source_ply: Path, assets: P
         result["summary"] = f"missing:{binary}"
         log(f"Aholo 转换跳过: {result['summary']}")
         return None, result
-    output = assets / f"{source_ply.stem}.{fmt}"
-    command = [str(binary), "create", str(source_ply), str(output)]
+    if fmt == "chunk-lod":
+        output_dir = assets / "aholo_lod"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output = output_dir / "lod-meta.json"
+        command = [str(binary), "lod:auto-chunk", "--type", "spz", "--max-chunk-counts", "200000", str(source_ply), str(output_dir)]
+    else:
+        output = assets / f"{source_ply.stem}.{fmt}"
+        command = [str(binary), "create", str(source_ply), str(output)]
     result.update({"attempted": True, "output": str(output), "command": command})
     log(f"Aholo 转换开始: {' '.join(command)}")
     env = os.environ.copy()
@@ -1127,6 +1154,9 @@ def _prepare_aholo_asset(config: RGBDOptimizeConfig, source_ply: Path, assets: P
         return None, result
     result["ok"] = True
     result["size"] = output.stat().st_size
+    if fmt == "chunk-lod":
+        result["file_count"] = len([path for path in output.parent.iterdir() if path.is_file()])
+        result["lod_meta"] = str(output)
     log(f"Aholo 转换完成: {output} ({output.stat().st_size / 1024**2:.1f} MB)")
     return output, result
 
