@@ -61,9 +61,10 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
         return r.json();
       });
       const layer = manifest.layers?.aholo_3dgs || manifest.layers?.spark_3dgs;
-      if (!layer?.available || !layer.file) throw new Error("当前任务没有可用 3DGS PLY。");
-      const url = new URL("../" + layer.file, location.href).href;
-      return { manifest, layer, url };
+      if (!layer?.available || (!layer.file && !layer.lod_meta)) throw new Error("当前任务没有可用 3DGS。");
+      const url = layer.file ? new URL("../" + layer.file, location.href).href : null;
+      const lodUrl = layer.lod_meta ? new URL("../" + layer.lod_meta, location.href).href : null;
+      return { manifest, layer, url, lodUrl };
     }
 
     function resetCamera(Vector3) {
@@ -106,8 +107,8 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
     }
 
     async function main() {
-      const { manifest, layer, url } = await loadManifest();
-      download.href = url;
+      const { manifest, layer, url, lodUrl } = await loadManifest();
+      download.href = url || lodUrl || "#";
       setStatus(`正在加载 Aholo 包和 ${Number(layer.gaussians || 0).toLocaleString()} 个高斯...`);
       const {
         BackgroundMode,
@@ -116,6 +117,7 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
         SplatLoader,
         SplatUtils,
         Vector3,
+        createViewerContext,
         createViewer,
         setViewerConfig,
       } = await import("https://esm.sh/@manycore/aholo-viewer@1.5.1");
@@ -123,20 +125,66 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
       viewer = createViewer("images23dgs-aholo-viewer", container, {});
       camera = new PerspectiveCamera(60, Math.max(0.1, container.clientWidth / Math.max(1, container.clientHeight)), 0.01, 2000);
 
-      const bytes = await fetchBytes(url, layer.file);
-      setStatus(`正在解析 ${Math.round(bytes.byteLength / 1048576)} MB 3DGS...`);
-      const fileType = SplatLoader.detectSplatFileType?.(url, bytes) ?? SplatLoader.SplatFileType.PLY;
-      const ext = new URL(url).pathname.split(".").pop().toLowerCase();
-      const packType = ext === "sog" ? SplatLoader.SplatPackType.Sog : (ext === "ply" ? SplatLoader.SplatPackType.SuperCompressed : SplatLoader.SplatPackType.Compressed);
-      const input = ext === "ply" ? bytes : url;
-      const data = await SplatLoader.parseSplatData(fileType, input, packType, {
-        maxShDegree: ext === "sog" ? 0 : 3,
-        maxTextureSize: 8192,
-      });
-      const splat = await SplatUtils.createSplat(data);
-      splat.autoFreeResourceOnGpuPacked = true;
+      const tickers = [];
+      if (lodUrl) {
+        setStatus(`正在加载 Aholo LOD: ${layer.lod_meta}`);
+        const meta = await fetch(lodUrl, { cache: "no-store" }).then(r => {
+          if (!r.ok) throw new Error(`LOD HTTP ${r.status}`);
+          return r.json();
+        });
+        if (!(meta.magicCode === 2500660 && meta.type === "lod-splat")) {
+          throw new Error("LOD metadata is not a supported lod-splat manifest.");
+        }
+        const baseUrl = new URL("./", lodUrl).href;
+        const loadResource = async relativeUrl => {
+          const resourceUrl = new URL(relativeUrl, baseUrl).href;
+          const fileType = SplatLoader.detectSplatFileType(resourceUrl, new Uint8Array());
+          if (fileType === undefined) throw new Error(`Unsupported LOD resource: ${relativeUrl}`);
+          return SplatLoader.parseSplatData(fileType, resourceUrl, SplatLoader.SplatPackType.Compressed, {
+            maxShDegree: 0,
+            maxTextureSize: 8192,
+          });
+        };
+        const lod = new SplatUtils.LodSplat(
+          meta,
+          {
+            minLevel: Math.max(0, meta.levels - 1),
+            maxBudget: 3000000,
+            backgroundPenalty: 0.5,
+            outsidePenalty: 0.4,
+            behindPenalty: 0.1,
+            behindTolerance: -0.2,
+            behindDistanceTolerance: 2,
+            hysteresisTicks: 4,
+            schedulerParallelCounts: 8,
+            schedulerExistingTaskLimit: 64,
+            schedulerMinDuration: 120,
+          },
+          createViewerContext(viewer),
+          loadResource,
+        );
+        viewer.getScene().add(lod.container);
+        lod.tick(camera);
+        lod.start();
+        tickers.push(() => lod.tick(camera));
+        setStatus(`Aholo LOD 已加载：${Number(layer.gaussians || meta.counts || 0).toLocaleString()} 个高斯。`);
+      } else {
+        const bytes = await fetchBytes(url, layer.file);
+        setStatus(`正在解析 ${Math.round(bytes.byteLength / 1048576)} MB 3DGS...`);
+        const fileType = SplatLoader.detectSplatFileType?.(url, bytes) ?? SplatLoader.SplatFileType.PLY;
+        const ext = new URL(url).pathname.split(".").pop().toLowerCase();
+        const packType = ext === "sog" ? SplatLoader.SplatPackType.Sog : (ext === "ply" ? SplatLoader.SplatPackType.SuperCompressed : SplatLoader.SplatPackType.Compressed);
+        const input = ext === "ply" ? bytes : url;
+        const data = await SplatLoader.parseSplatData(fileType, input, packType, {
+          maxShDegree: ext === "sog" ? 0 : 3,
+          maxTextureSize: 8192,
+        });
+        const splat = await SplatUtils.createSplat(data);
+        splat.autoFreeResourceOnGpuPacked = true;
 
-      viewer.getScene().add(splat);
+        viewer.getScene().add(splat);
+        setStatus(`Aholo 已加载：${Number(layer.gaussians || 0).toLocaleString()} 个高斯。`);
+      }
       setViewerConfig(viewer, {
         pixelRatio: Math.min(1, 1 / Math.max(1, window.devicePixelRatio || 1)),
         pipeline: {
@@ -152,11 +200,13 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
         },
       });
       resetCamera(Vector3);
-      const render = () => viewer.render();
+      const render = () => {
+        for (const tick of tickers) tick();
+        viewer.render();
+      };
       viewer.requestRenderHandler = () => requestAnimationFrame(render);
       window.addEventListener("resize", () => resetCamera(Vector3));
       document.getElementById("reset").onclick = () => resetCamera(Vector3);
-      setStatus(`Aholo 已加载：${Number(layer.gaussians || 0).toLocaleString()} 个高斯。`);
       requestAnimationFrame(render);
     }
 
