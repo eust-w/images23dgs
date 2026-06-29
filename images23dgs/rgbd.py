@@ -75,6 +75,36 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
       viewer.render();
     }
 
+    async function fetchBytes(url, label) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`3DGS HTTP ${response.status}`);
+      const total = Number(response.headers.get("content-length") || 0);
+      if (!response.body?.getReader) {
+        const buffer = await response.arrayBuffer();
+        return new Uint8Array(buffer);
+      }
+      const reader = response.body.getReader();
+      const chunks = [];
+      let received = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.byteLength;
+        const mb = (received / 1048576).toFixed(1);
+        const totalText = total ? ` / ${(total / 1048576).toFixed(1)} MB` : " MB";
+        const pct = total ? ` (${Math.round(received * 100 / total)}%)` : "";
+        setStatus(`正在下载 ${label}: ${mb}${totalText}${pct}`);
+      }
+      const bytes = new Uint8Array(received);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return bytes;
+    }
+
     async function main() {
       const { manifest, layer, url } = await loadManifest();
       download.href = url;
@@ -93,10 +123,7 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
       viewer = createViewer("images23dgs-aholo-viewer", container, {});
       camera = new PerspectiveCamera(60, Math.max(0.1, container.clientWidth / Math.max(1, container.clientHeight)), 0.01, 2000);
 
-      setStatus(`正在下载 3DGS: ${layer.file}`);
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`3DGS HTTP ${response.status}`);
-      const bytes = new Uint8Array(await response.arrayBuffer());
+      const bytes = await fetchBytes(url, layer.file);
       setStatus(`正在解析 ${Math.round(bytes.byteLength / 1048576)} MB 3DGS PLY...`);
       const fileType = SplatLoader.detectSplatFileType?.(url, bytes) ?? SplatLoader.SplatFileType.PLY;
       const data = await SplatLoader.parseSplatData(fileType, bytes, SplatLoader.SplatPackType.SuperCompressed);
