@@ -128,7 +128,8 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
       const fileType = SplatLoader.detectSplatFileType?.(url, bytes) ?? SplatLoader.SplatFileType.PLY;
       const ext = new URL(url).pathname.split(".").pop().toLowerCase();
       const packType = ext === "sog" ? SplatLoader.SplatPackType.Sog : (ext === "ply" ? SplatLoader.SplatPackType.SuperCompressed : SplatLoader.SplatPackType.Compressed);
-      const data = await SplatLoader.parseSplatData(fileType, bytes, packType, {
+      const input = ext === "ply" ? bytes : url;
+      const data = await SplatLoader.parseSplatData(fileType, input, packType, {
         maxShDegree: ext === "sog" ? 0 : 3,
         maxTextureSize: 8192,
       });
