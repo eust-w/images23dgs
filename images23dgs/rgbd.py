@@ -324,6 +324,18 @@ class RGBDOptimizeConfig:
     gsplat_max_points: int = 80_000
     gsplat_target_gaussians: int = 50_000
     gsplat_dense_image_points_per_frame: int = 0
+    gsplat_dense_depth_neighbors: int = 4
+    gsplat_dense_depth_max_distance: float = 0.08
+    gsplat_adaptive_densify_every: int = 0
+    gsplat_adaptive_densify_start: int = 50
+    gsplat_adaptive_densify_stop: int = 0
+    gsplat_adaptive_densify_points: int = 2500
+    gsplat_adaptive_densify_error_percentile: float = 92.0
+    gsplat_adaptive_densify_depth_neighbors: int = 4
+    gsplat_adaptive_densify_max_distance: float = 0.08
+    gsplat_adaptive_densify_max_projection_points: int = 120_000
+    gsplat_preview_frames: int = 4
+    gsplat_trim_outlier_percentile: float = 99.5
     gsplat_initial_scale: float = 0.0
     gsplat_device: str = "cuda"
     aholo_splat_transform_binary: Path | None = None
@@ -1030,6 +1042,30 @@ def _run_or_resolve_training(config: RGBDOptimizeConfig, pose_dir: Path, source:
             str(config.gsplat_target_gaussians),
             "--dense-image-points-per-frame",
             str(config.gsplat_dense_image_points_per_frame),
+            "--dense-depth-neighbors",
+            str(config.gsplat_dense_depth_neighbors),
+            "--dense-depth-max-distance",
+            str(config.gsplat_dense_depth_max_distance),
+            "--adaptive-densify-every",
+            str(config.gsplat_adaptive_densify_every),
+            "--adaptive-densify-start",
+            str(config.gsplat_adaptive_densify_start),
+            "--adaptive-densify-stop",
+            str(config.gsplat_adaptive_densify_stop),
+            "--adaptive-densify-points",
+            str(config.gsplat_adaptive_densify_points),
+            "--adaptive-densify-error-percentile",
+            str(config.gsplat_adaptive_densify_error_percentile),
+            "--adaptive-densify-depth-neighbors",
+            str(config.gsplat_adaptive_densify_depth_neighbors),
+            "--adaptive-densify-max-distance",
+            str(config.gsplat_adaptive_densify_max_distance),
+            "--adaptive-densify-max-projection-points",
+            str(config.gsplat_adaptive_densify_max_projection_points),
+            "--preview-frames",
+            str(config.gsplat_preview_frames),
+            "--trim-outlier-percentile",
+            str(config.gsplat_trim_outlier_percentile),
             "--device",
             config.gsplat_device,
         ]

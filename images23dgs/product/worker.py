@@ -18,7 +18,29 @@ TEMPLATES = {
     "quick_preview": {"label": "快速预览", "dry_run": True, "max_image_size": 960},
     "standard": {"label": "标准重建", "dry_run": False, "max_image_size": 1600},
     "rgbd_optimized": {"label": "RGBD优化", "dry_run": False, "max_image_size": 1280},
-    "high_quality": {"label": "高质量训练", "dry_run": False, "max_image_size": 1600},
+    "high_quality": {
+        "label": "高质量训练",
+        "dry_run": False,
+        "max_image_size": 1600,
+        "rgbd_defaults": {
+            "train_gsplat": True,
+            "max_point_count": 2_000_000,
+            "point_stride": 2,
+            "point_keep_every": 2,
+            "gsplat_max_steps": 30_000,
+            "gsplat_max_frames": 800,
+            "gsplat_image_max_size": 768,
+            "gsplat_max_points": 2_000_000,
+            "gsplat_target_gaussians": 2_000_000,
+            "gsplat_dense_image_points_per_frame": 1500,
+            "gsplat_adaptive_densify_every": 500,
+            "gsplat_adaptive_densify_start": 1000,
+            "gsplat_adaptive_densify_stop": 24_000,
+            "gsplat_adaptive_densify_points": 10_000,
+            "gsplat_preview_frames": 8,
+            "gsplat_initial_scale": 0.004,
+        },
+    },
 }
 
 
@@ -73,13 +95,21 @@ class JobWorker:
         source_path = _resolve_dataset_source(dataset_path)
         template = TEMPLATES.get(job["template"], TEMPLATES["quick_preview"])
         params = dict(job.get("parameters") or {})
+        if job["template"] == "high_quality":
+            params = {**template.get("rgbd_defaults", {}), **params}
+            if _looks_like_rgbd(source_path):
+                job_template = "rgbd_optimized"
+            else:
+                job_template = job["template"]
+        else:
+            job_template = job["template"]
         dry_run = bool(params.get("dry_run", template["dry_run"]))
         run_dir = Path(job["run_dir"])
         log_path.write_text(
             f"任务 {job['id']} 开始\n模板: {template['label']}\n数据集: {source_path}\ndry_run: {dry_run}\n",
             encoding="utf-8",
         )
-        if job["template"] == "rgbd_optimized":
+        if job_template == "rgbd_optimized":
             result = run_rgbd_optimized(
                 RGBDOptimizeConfig(
                     source=source_path,
@@ -101,6 +131,18 @@ class JobWorker:
                     gsplat_max_points=int(params.get("gsplat_max_points", 80_000)),
                     gsplat_target_gaussians=int(params.get("gsplat_target_gaussians", 50_000)),
                     gsplat_dense_image_points_per_frame=int(params.get("gsplat_dense_image_points_per_frame", 0)),
+                    gsplat_dense_depth_neighbors=int(params.get("gsplat_dense_depth_neighbors", 4)),
+                    gsplat_dense_depth_max_distance=float(params.get("gsplat_dense_depth_max_distance", 0.08)),
+                    gsplat_adaptive_densify_every=int(params.get("gsplat_adaptive_densify_every", 0)),
+                    gsplat_adaptive_densify_start=int(params.get("gsplat_adaptive_densify_start", 50)),
+                    gsplat_adaptive_densify_stop=int(params.get("gsplat_adaptive_densify_stop", 0)),
+                    gsplat_adaptive_densify_points=int(params.get("gsplat_adaptive_densify_points", 2500)),
+                    gsplat_adaptive_densify_error_percentile=float(params.get("gsplat_adaptive_densify_error_percentile", 92.0)),
+                    gsplat_adaptive_densify_depth_neighbors=int(params.get("gsplat_adaptive_densify_depth_neighbors", 4)),
+                    gsplat_adaptive_densify_max_distance=float(params.get("gsplat_adaptive_densify_max_distance", 0.08)),
+                    gsplat_adaptive_densify_max_projection_points=int(params.get("gsplat_adaptive_densify_max_projection_points", 120_000)),
+                    gsplat_preview_frames=int(params.get("gsplat_preview_frames", 4)),
+                    gsplat_trim_outlier_percentile=float(params.get("gsplat_trim_outlier_percentile", 99.5)),
                     gsplat_initial_scale=float(params.get("gsplat_initial_scale", 0.0)),
                     gsplat_device=str(params.get("gsplat_device", "cuda")),
                     aholo_splat_transform_binary=_optional_path(params.get("aholo_splat_transform_binary")) or self.config.aholo_splat_transform_binary,
@@ -145,6 +187,12 @@ def _resolve_dataset_source(dataset_path: Path) -> Path:
     if marker.is_file():
         return Path(marker.read_text(encoding="utf-8").strip())
     return dataset_path
+
+
+def _looks_like_rgbd(path: Path) -> bool:
+    return any((path / name).is_dir() for name in ["depth", "depth_selected", "depths", "frames2"]) and any(
+        (path / name).is_dir() for name in ["images", "rgb", "color", "colors"]
+    )
 
 
 def _append_log(path: Path, message: str) -> None:
