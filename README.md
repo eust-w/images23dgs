@@ -1,110 +1,14 @@
 # images23dgs
 
-`images23dgs` wraps the local DISCOVERSE/Real2Sim scene generation flow and
-adds an ArtiFixer branch for sparse-view captures.
+`images23dgs` turns image/RGBD captures into a productized 3D Gaussian workflow:
+dataset import, COLMAP/RGBD pose handling, sparse-view repair hooks, 3DGS
+training/preview, source-view QA, and a Chinese web console for Wuying-style
+single-machine deployment.
 
-The default command is:
+## Quick Start
 
-```bash
-python -m images23dgs run \
-  --images /path/to/photos \
-  --output /tmp/images23dgs_scene \
-  --prompt "static indoor room with task-relevant furniture and floor"
-```
-
-What it does:
-
-1. Copies the source images into the output package.
-2. Runs COLMAP when available and records registration quality.
-3. Chooses the ArtiFixer branch when the source image count or COLMAP
-   registered ratio is too low.
-4. Runs `python -m real2sim generate-scene` from the local GS-Playground /
-   DISCOVERSE-compatible Real2Sim checkout.
-5. Validates the final `3dgs/scene.ply` header and writes a run manifest.
-
-The wrapper leaves Real2Sim pruning disabled by default because pruning requires
-the optional `gaussian_renderer` package. Use `--enable-prune` only in an
-environment where that optional dependency is installed.
-
-The current local defaults are:
-
-- DISCOVERSE root: `/Users/d-robotics/workSpace/DISCOVERSE`
-- Real2Sim root: `/Users/d-robotics/workSpace/gs_playground`
-- Direct path threshold: at least `24` images and `0.65` COLMAP registered ratio
-
-## Artifixer
-
-ArtiFixer is not a light image inpaint command. Its official workflow expects a
-COLMAP scene, a CUDA environment with the ArtiFixer-compatible 3DGRUT submodule,
-and the `nvidia/ArtiFixer` checkpoint. This wrapper wires the official stages:
-
-```bash
-python -m data_processing.prepare_colmap_artifixer_inputs
-python -m model_eval.run_inference
-python -m data_processing.run_artifixer3d
-python -m model_eval.run_inference
-```
-
-Run with an existing ArtiFixer checkout and checkpoint:
-
-```bash
-python -m images23dgs run \
-  --images /path/to/photos \
-  --output /tmp/images23dgs_scene \
-  --artifixer-root /path/to/ArtiFixer \
-  --artifixer-checkpoint /data/artifixer-checkpoints/artifixer-14b.pt \
-  --force-artifixer
-```
-
-To just inspect the decisions and generated commands without running GPU work:
-
-```bash
-python -m images23dgs run \
-  --images /path/to/photos \
-  --output /tmp/images23dgs_scene \
-  --dry-run
-```
-
-Artifacts:
-
-- `reports/run_manifest.json`: stage decisions, paths, PLY validation
-- `run_commands.sh`: reproducible shell command log
-- `colmap/`: Artifixer-compatible COLMAP scene root, including `images/` and `sparse/0/`
-- `artifixer/`: ArtiFixer prepared scene and corrected frames when used
-- `discoverse_package/3dgs/scene.ply`: generated scene Gaussian asset
-- `viewer/`: Spark.js / Three.js layered preview
-
-## Layered Viewer
-
-Each run writes `viewer/index.html` and `viewer/viewer_manifest.json`.
-
-Serve it from the run output root:
-
-```bash
-cd /tmp/images23dgs_scene
-python3 viewer/serve.py --port 18123
-```
-
-Open:
-
-```text
-http://127.0.0.1:18123/viewer/index.html
-```
-
-The viewer exposes independent layers:
-
-- Spark 3DGS visual render from a full 3DGS PLY. ASCII PLY files are converted
-  to `viewer/assets/*_spark_binary.ply` for Spark.js compatibility.
-- 3DGS point-cloud preview from Gaussian centers and RGB or `f_dc_*` colors.
-- Collision/scene mesh preview from the packaged OBJ.
-- MJCF geom overlay from `mjcf/scene.xml`.
-- COLMAP sparse points and camera trajectory when `sparse_text/*.txt` exists.
-
-## Wuying Web Product
-
-For a completely clean Wuying machine, use the single-file installer. It
-downloads this GitHub repository, creates `/opt/images23dgs_app`, installs the
-web product, and runs the product doctor check.
+On a clean Linux/Wuying machine, install and start the web product with one
+command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/eust-w/images23dgs/main/scripts/images23dgs-installer | sudo bash -s -- --start
@@ -116,15 +20,117 @@ If the machine has `wget` but no `curl`:
 wget -qO- https://raw.githubusercontent.com/eust-w/images23dgs/main/scripts/images23dgs-installer | sudo bash -s -- --start
 ```
 
-If the machine lacks the basic downloader too, install only the downloader first
-with the OS package manager, then run the installer:
+If the machine has neither downloader, install only the downloader first:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y curl ca-certificates && \
   curl -fsSL https://raw.githubusercontent.com/eust-w/images23dgs/main/scripts/images23dgs-installer | sudo bash -s -- --start
 ```
 
-If the source is already present on the machine:
+After startup, open:
+
+```text
+http://<server-ip>:18123/
+```
+
+For SSH tunneling from your laptop:
+
+```bash
+ssh -L 18124:127.0.0.1:18123 user@server
+```
+
+Then open:
+
+```text
+http://127.0.0.1:18124/
+```
+
+## What The Installer Does
+
+The single-file installer downloads this public GitHub repository and installs
+the product under `/opt/images23dgs_app`.
+
+It performs:
+
+1. Installs minimal base tools when possible: `bash`, `python3`, `curl`, `tar`,
+   `ca-certificates`.
+2. Downloads the repository archive from GitHub.
+3. Creates `/opt/images23dgs_app/src`, `/opt/images23dgs_app/workspace`, and a
+   Python virtual environment.
+4. Installs `images23dgs[web]` and `uv`.
+5. Writes `/opt/images23dgs_app/config.toml`.
+6. Runs `images23dgs product doctor`.
+7. With `--start`, starts the FastAPI backend, static Chinese frontend, and
+   serial task worker on `0.0.0.0:18123`.
+
+The installer supports these package managers for minimal base tools:
+`apt-get`, `dnf`, `yum`, `microdnf`, `zypper`, and `apk`.
+
+## System Requirements
+
+Minimum for installing the web app:
+
+- Linux shell with `sudo` or root access.
+- Network access to GitHub and Python package indexes.
+- `curl` or `wget` to fetch the installer.
+
+Recommended for real reconstruction/training:
+
+- NVIDIA GPU and working CUDA driver.
+- COLMAP, default path `/usr/local/bin/colmap`.
+- Real2Sim checkout, default path `/opt/gs_playground_real2sim_48q`.
+- gsplat training Python, default path
+  `/opt/real2sim_paper_runtime/envs/anysplat/bin/python`.
+- Optional ArtiFixer checkout/checkpoint for sparse-view repair.
+
+Check the environment at any time:
+
+```bash
+/opt/images23dgs_app/venv/bin/images23dgs product doctor \
+  --config /opt/images23dgs_app/config.toml
+```
+
+## Web Usage
+
+The web UI is Chinese by default and contains these tabs:
+
+- `数据集`: upload a zip/video/RGBD directory or import a server-local path.
+- `任务`: create reconstruction jobs and choose templates.
+- `预览`: open Spark 3DGS, point cloud, COLMAP trajectory, and mesh layers.
+- `质检`: inspect source-view QA, metrics, COLMAP registration, and pose source.
+- `设置`: view paths, port, workspace, and doctor results.
+- `采集指南`: iPhone/ARKit capture format guidance.
+
+Typical flow:
+
+1. Open `http://<server-ip>:18123/`.
+2. In `数据集`, upload data or import a local directory.
+3. In `任务`, choose a dataset and one template:
+   - `快速预览`: smoke test, low cost.
+   - `标准重建`: standard images23dgs pipeline.
+   - `RGBD优化`: for iPhone/ARKit RGBD data with depth/pose support.
+   - `高质量训练`: more frames/steps, intended for better captures.
+4. Watch live logs in `任务`.
+5. Open `预览` for the layered viewer.
+6. Open `质检` for source-view QA and artifact links.
+
+Job artifacts are stored under:
+
+```text
+/opt/images23dgs_app/workspace/runs/<job_id>/
+```
+
+Important files:
+
+- `logs/job.log`
+- `reports/run_manifest.json`
+- `viewer/index.html`
+- `source_view_qa.html`
+- `artifacts/`
+
+## Service Commands
+
+Install from an existing source checkout:
 
 ```bash
 bash scripts/install_wuying.sh
@@ -136,5 +142,145 @@ Start the frontend, backend, and worker:
 bash scripts/start_wuying.sh
 ```
 
-The default service listens on `0.0.0.0:18123`. For local browser access through
-SSH tunneling, map the remote port to a local port such as `18124`.
+Check only:
+
+```bash
+bash scripts/start_wuying.sh --check-only
+```
+
+Use a custom app root:
+
+```bash
+IMAGES23DGS_APP_ROOT=/data/images23dgs_app bash scripts/install_wuying.sh
+IMAGES23DGS_APP_ROOT=/data/images23dgs_app bash scripts/start_wuying.sh
+```
+
+Use the single-file installer with a custom app root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eust-w/images23dgs/main/scripts/images23dgs-installer | \
+  sudo bash -s -- --app-root /data/images23dgs_app --start
+```
+
+## CLI Usage
+
+Run the classic image-to-3DGS pipeline:
+
+```bash
+python -m images23dgs run \
+  --images /path/to/photos \
+  --output /tmp/images23dgs_scene \
+  --prompt "static indoor room with task-relevant furniture and floor"
+```
+
+Dry-run without GPU work:
+
+```bash
+python -m images23dgs run \
+  --images /path/to/photos \
+  --output /tmp/images23dgs_scene \
+  --dry-run
+```
+
+Force ArtiFixer sparse-view repair:
+
+```bash
+python -m images23dgs run \
+  --images /path/to/photos \
+  --output /tmp/images23dgs_scene \
+  --artifixer-root /path/to/ArtiFixer \
+  --artifixer-checkpoint /data/artifixer-checkpoints/artifixer-14b.pt \
+  --force-artifixer
+```
+
+Inspect image count or a PLY:
+
+```bash
+python -m images23dgs inspect --images /path/to/photos
+python -m images23dgs inspect --ply /path/to/scene.ply
+```
+
+## Pipeline Behavior
+
+For image-only input, the classic pipeline:
+
+1. Copies source images into the output package.
+2. Runs COLMAP when available and records registration quality.
+3. Chooses the ArtiFixer branch when image count or COLMAP registration is too
+   low.
+4. Calls the local DISCOVERSE/Real2Sim-compatible generation flow.
+5. Validates the final Gaussian PLY and writes a run manifest.
+
+For RGBD/iPhone-style input, the web product can use RGB/depth data and
+estimated or provided pose sources. The UI explicitly reports:
+
+- real pose availability
+- pose source, such as `RGBD-PnP估计`, `COLMAP`, or `ARKit`
+- photo-level quality risk
+
+## Layered Viewer
+
+Each run writes `viewer/index.html` and `viewer/viewer_manifest.json`.
+
+The viewer exposes independent layers:
+
+- Spark 3DGS visual render from a full 3DGS PLY.
+- 3DGS point-cloud preview from Gaussian centers.
+- Collision/scene mesh preview when available.
+- COLMAP sparse points and camera trajectory.
+- Source-view QA links and artifact downloads.
+
+To serve a standalone run directory:
+
+```bash
+cd /tmp/images23dgs_scene
+python3 viewer/serve.py --port 18123
+```
+
+Then open:
+
+```text
+http://127.0.0.1:18123/viewer/index.html
+```
+
+## Configuration
+
+Default config path:
+
+```text
+/opt/images23dgs_app/config.toml
+```
+
+Default values:
+
+```toml
+app_root = "/opt/images23dgs_app"
+workspace_dir = "/opt/images23dgs_app/workspace"
+real2sim_root = "/opt/gs_playground_real2sim_48q"
+gsplat_python = "/opt/real2sim_paper_runtime/envs/anysplat/bin/python"
+gsplat_train_script = "/opt/gs_playground_real2sim_48q/scripts/real2sim_pose_init_gsplat_train.py"
+colmap_binary = "/usr/local/bin/colmap"
+host = "0.0.0.0"
+port = 18123
+```
+
+Edit this file when your COLMAP, Real2Sim, gsplat, ArtiFixer, or workspace paths
+differ from the defaults.
+
+## Troubleshooting
+
+If port `18123` is already in use, either stop the old service or change
+`port` in `/opt/images23dgs_app/config.toml`.
+
+If installation succeeds but reconstruction quality is poor, check:
+
+- source image count and overlap
+- whether real pose/depth exists
+- COLMAP registered image count
+- source-view QA
+- `reports/run_manifest.json`
+- `logs/job.log`
+
+If `doctor` reports missing optional heavy dependencies, the web app can still
+start, but real reconstruction/training may fail until those dependencies are
+installed.
