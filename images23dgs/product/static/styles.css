@@ -1,0 +1,18 @@
+body{margin:0;background:#11161d;color:#e9eef5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;height:100vh}
+aside{width:220px;background:#0b0f14;border-right:1px solid #26313f;padding:18px;box-sizing:border-box}
+h1{font-size:20px;margin:0 0 18px}h2{margin-top:0}
+button,select,input{background:#1a2430;color:#eef;border:1px solid #34465a;border-radius:6px;padding:9px 10px}
+button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.45}button.active{background:#2f6fed;border-color:#6fa0ff}
+aside button{display:block;width:100%;margin:8px 0;text-align:left}
+main{flex:1;overflow:auto;padding:22px}.tab{display:none}.tab.active{display:block}
+.panel{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#151d26;border:1px solid #273545;padding:14px;border-radius:8px;margin-bottom:16px}
+.form-panel{align-items:flex-end}
+label{display:flex;gap:8px;align-items:center}input{min-width:320px}
+.form-panel input[type=checkbox]{min-width:auto}.form-panel input[type=number]{min-width:110px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.card{background:#151d26;border:1px solid #273545;border-radius:8px;padding:14px}
+.job-card{position:relative}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.actions button{padding:7px 9px}
+.badge{display:inline-block;margin-left:8px;padding:3px 7px;border-radius:999px;background:#263442;color:#dce8f6;font-size:12px}.status-succeeded{background:#16492c}.status-failed{background:#642525}.status-running{background:#27446e}.status-queued{background:#4b4565}.status-canceled{background:#4b4f55}
+.muted{color:#9fb0c3}.risk{font-weight:700}.risk-高{color:#ff8f8f}.risk-中{color:#ffd37a}.risk-低{color:#8dffa8}
+pre{background:#080b0f;border:1px solid #26313f;border-radius:8px;padding:12px;white-space:pre-wrap;max-height:360px;overflow:auto}
+iframe{width:100%;height:70vh;border:1px solid #26313f;border-radius:8px;background:#000}

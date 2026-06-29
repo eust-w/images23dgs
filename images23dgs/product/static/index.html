@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>images23dgs 工作台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <aside>
+    <h1>images23dgs</h1>
+    <button data-tab="datasets" class="active">数据集</button>
+    <button data-tab="jobs">任务</button>
+    <button data-tab="preview">预览</button>
+    <button data-tab="qa">质检</button>
+    <button data-tab="settings">设置</button>
+    <button data-tab="guide">采集指南</button>
+  </aside>
+  <main>
+    <section id="datasets" class="tab active">
+      <h2>数据集</h2>
+      <div class="panel">
+        <label>无影本地路径 <input id="datasetPath" placeholder="/tmp/recording_2026..."></label>
+        <button id="importPath">导入路径</button>
+        <label class="upload">上传 zip / 单文件 <input id="uploadFile" type="file"></label>
+        <button id="uploadButton">上传</button>
+      </div>
+      <div id="datasetsList" class="grid"></div>
+    </section>
+    <section id="jobs" class="tab">
+      <h2>任务</h2>
+      <div class="panel">
+        <select id="datasetSelect"></select>
+        <select id="templateSelect">
+          <option value="quick_preview">快速预览</option>
+          <option value="standard">标准重建</option>
+          <option value="rgbd_optimized">RGBD优化</option>
+          <option value="high_quality">高质量训练</option>
+        </select>
+        <button id="createJob">创建任务</button>
+      </div>
+      <div class="panel form-panel">
+        <label>场景名 <input id="sceneName" placeholder="默认使用数据集名"></label>
+        <label>Prompt <input id="prompt" placeholder="static indoor scene"></label>
+        <label>COLMAP 尺寸 <input id="colmapSize" type="number" value="1600" min="320" step="80"></label>
+        <label><input id="forceArtifixer" type="checkbox"> 强制 ArtiFixer</label>
+        <label><input id="skipArtifixer" type="checkbox"> 跳过 ArtiFixer</label>
+        <label>ArtiFixer anchors <input id="artifixerAnchors" type="number" min="0" placeholder="自动"></label>
+        <label>ArtiFixer steps <input id="artifixerSteps" type="number" min="100" value="10000"></label>
+        <label>RGBD 点数上限 <input id="maxPointCount" type="number" min="10000" step="10000" value="850000"></label>
+        <label><input id="trainGsplat" type="checkbox"> 从零训练 3DGS</label>
+        <label>训练 steps <input id="gsplatSteps" type="number" min="1" value="200"></label>
+        <label>训练帧数 <input id="gsplatFrames" type="number" min="1" value="16"></label>
+        <label>训练图像尺寸 <input id="gsplatImageSize" type="number" min="128" value="448"></label>
+        <label>训练点上限 <input id="gsplatMaxPoints" type="number" min="1000" step="1000" value="80000"></label>
+        <label>目标高斯数 <input id="gsplatTargetGaussians" type="number" min="1000" step="1000" value="50000"></label>
+        <label>已训练 3DGS PLY <input id="trainedPly" placeholder="/tmp/.../pose_init_trained_scene.ply"></label>
+        <label>训练 metrics <input id="trainingMetrics" placeholder="/tmp/.../pose_init_training_metrics.json"></label>
+      </div>
+      <div id="jobsList" class="grid"></div>
+      <pre id="jobLogs"></pre>
+    </section>
+    <section id="preview" class="tab">
+      <h2>预览</h2>
+      <p>选择已完成任务后打开 viewer。Spark 3DGS、点云、COLMAP、mesh 在 viewer 内独立开关。</p>
+      <iframe id="previewFrame"></iframe>
+    </section>
+    <section id="qa" class="tab">
+      <h2>质检</h2>
+      <p id="qaText">关注真实pose、pose来源、照片级风险、PSNR/MAE 和源视角对比。</p>
+      <iframe id="qaFrame"></iframe>
+    </section>
+    <section id="settings" class="tab">
+      <h2>设置</h2>
+      <button id="doctorButton">环境检查</button>
+      <pre id="doctorOutput"></pre>
+    </section>
+    <section id="guide" class="tab">
+      <h2>iPhone / ARKit 采集指南</h2>
+      <ul>
+        <li>必须保存 RGB、Depth、confidence、intrinsics、camera_to_world。</li>
+        <li>只保存 IMU 不等于真实 pose；IMU 只能辅助。</li>
+        <li>采集时保持慢速移动、稳定曝光、足够重叠，避免玻璃和纯白墙。</li>
+        <li>UI 会标记：真实pose、pose来源、照片级风险。</li>
+      </ul>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

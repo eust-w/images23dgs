@@ -1,0 +1,760 @@
+from __future__ import annotations
+
+import json
+import math
+import shutil
+import struct
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+from .ply import read_ply_header
+from .viewer import VIEWER_HTML, _prepare_spark_ply
+
+
+LogFn = Callable[[str], None]
+
+
+@dataclass(frozen=True)
+class RGBDOptimizeConfig:
+    source: Path
+    output: Path
+    scene_name: str = "RGBD优化"
+    max_point_count: int = 850_000
+    point_stride: int = 4
+    point_keep_every: int = 2
+    train_frames_hint: int = 220
+    trained_ply: Path | None = None
+    training_metrics: Path | None = None
+    training_preview: Path | None = None
+    training_contact_sheet: Path | None = None
+    train_gsplat: bool = False
+    gsplat_python: Path | None = None
+    gsplat_train_script: Path | None = None
+    gsplat_max_steps: int = 200
+    gsplat_max_frames: int = 16
+    gsplat_image_max_size: int = 448
+    gsplat_max_points: int = 80_000
+    gsplat_target_gaussians: int = 50_000
+    gsplat_device: str = "cuda"
+    dry_run: bool = False
+
+
+def run_rgbd_optimized(config: RGBDOptimizeConfig, log: LogFn | None = None) -> dict[str, Any]:
+    logger = log or (lambda _message: None)
+    source = config.source.resolve()
+    output = config.output.resolve()
+    reports = output / "reports"
+    viewer = output / "viewer"
+    assets = viewer / "assets"
+    colmap_dir = assets / "colmap_rgbd"
+    thumbs = colmap_dir / "thumbs"
+    pose_dir = output / "rgbd_pose_init"
+    for path in [reports, viewer, assets, colmap_dir, thumbs, pose_dir / "images"]:
+        path.mkdir(parents=True, exist_ok=True)
+
+    rgb_files, depth_files = _find_rgbd_pairs(source)
+    if not rgb_files or not depth_files:
+        raise RuntimeError(f"RGBD 数据不完整，需要 images 与 depth/depth_selected/frames2: {source}")
+    if len(rgb_files) != len(depth_files):
+        raise RuntimeError(f"RGB/Depth 数量不一致: rgb={len(rgb_files)}, depth={len(depth_files)}")
+    logger(f"RGBD 输入: RGB {len(rgb_files)} 张, Depth {len(depth_files)} 张")
+
+    if config.dry_run:
+        return _write_dry_run(config, rgb_files, depth_files)
+
+    cv2, np, Image = _load_rgbd_dependencies()
+    first = Image.open(rgb_files[0]).convert("RGB")
+    width, height = first.size
+    intrinsics = _estimate_intrinsics(width, height)
+    with Image.open(depth_files[0]) as depth_image:
+        depth_width, depth_height = depth_image.size
+    depth_intrinsics = _scale_intrinsics(intrinsics, depth_width / width, depth_height / height)
+    logger(f"内参: fx={intrinsics['fx']:.3f}, fy={intrinsics['fy']:.3f}, cx={intrinsics['cx']:.3f}, cy={intrinsics['cy']:.3f}")
+
+    poses, stats = _estimate_rgbd_pnp(
+        rgb_files,
+        depth_files,
+        intrinsics=intrinsics,
+        depth_intrinsics=depth_intrinsics,
+        target_size=(width, height),
+        log=logger,
+    )
+    ok_steps = sum(1 for item in stats if item["ok"])
+    logger(f"RGBD-PnP 完成: ok_steps={ok_steps}, fail_steps={len(stats) - ok_steps}")
+
+    _copy_images(rgb_files, pose_dir / "images")
+    _write_colmap_text(colmap_dir, rgb_files, poses, intrinsics, width, height)
+    points, colors = _fuse_rgbd_points(
+        rgb_files,
+        depth_files,
+        poses,
+        depth_intrinsics=depth_intrinsics,
+        target_size=(width, height),
+        max_point_count=config.max_point_count,
+        stride=config.point_stride,
+        keep_every=config.point_keep_every,
+        log=logger,
+    )
+    point_cloud = assets / "rgbd_fused_points.ply"
+    pose_point_cloud = pose_dir / "colmap_sparse_points.ply"
+    _write_binary_rgb_ply(point_cloud, points, colors)
+    _write_ascii_rgb_ply(pose_point_cloud, points, colors)
+    _write_transforms(pose_dir, rgb_files, poses, intrinsics, width, height, stats)
+    _write_thumbnails(rgb_files, thumbs, Image)
+
+    trained = _run_or_resolve_training(config, pose_dir, source, logger)
+    spark_asset = None
+    ply_info: dict[str, Any] = {}
+    if trained.get("ply"):
+        source_ply = Path(trained["ply"])
+        copied = assets / source_ply.name
+        if source_ply.resolve() != copied.resolve():
+            shutil.copy2(source_ply, copied)
+        spark_asset = _prepare_spark_ply(copied, viewer)
+        ply_info = read_ply_header(spark_asset or copied).to_jsonable()
+        logger(f"Spark 3DGS 已接入: {spark_asset or copied}")
+    copied_training = _copy_training_previews(trained, assets)
+
+    trajectory = _trajectory_bounds(poses)
+    point_bounds = _point_bounds(points)
+    training_metrics = _read_json(Path(trained["metrics"])) if trained.get("metrics") else {}
+    viewer_manifest = _build_viewer_manifest(
+        config=config,
+        viewer=viewer,
+        point_cloud=point_cloud,
+        colmap_dir=colmap_dir,
+        spark_asset=spark_asset,
+        spark_info=ply_info,
+        metrics={
+            "rgb_frames": len(rgb_files),
+            "depth_frames": len(depth_files),
+            "point_count": int(len(points)),
+            "rgbd_pnp_ok_steps": ok_steps,
+            "rgbd_pnp_fail_steps": len(stats) - ok_steps,
+            "median_inliers_ok": _median([s["inliers"] for s in stats if s["ok"]]),
+            "trajectory_bbox_min": trajectory[0],
+            "trajectory_bbox_max": trajectory[1],
+            "point_bbox_min": point_bounds[0],
+            "point_bbox_max": point_bounds[1],
+            "gsplat_metrics": str(trained["metrics"]) if trained.get("metrics") else None,
+            **_extract_training_metrics(training_metrics),
+        },
+    )
+    (viewer / "viewer_manifest.json").write_text(json.dumps(viewer_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (viewer / "index.html").write_text(VIEWER_HTML, encoding="utf-8")
+
+    run_manifest = {
+        "schema": "images23dgs.rgbd_optimized.v1",
+        "source": str(source),
+        "output": str(output),
+        "pose_source": "RGBD-PnP估计",
+        "real_pose": False,
+        "photo_risk": "中",
+        "rgbd": {
+            "rgb_frames": len(rgb_files),
+            "depth_frames": len(depth_files),
+            "ok_steps": ok_steps,
+            "fail_steps": len(stats) - ok_steps,
+            "pose_dir": str(pose_dir),
+            "point_cloud": str(point_cloud),
+        },
+        "training": trained,
+        "copied_training_assets": copied_training,
+        "viewer": {"index_html": str(viewer / "index.html"), "manifest_json": str(viewer / "viewer_manifest.json")},
+        "source_view_qa": str(output / "source_view_qa.html"),
+        "dry_run": False,
+    }
+    (reports / "run_manifest.json").write_text(json.dumps(run_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _write_source_view_qa(output / "source_view_qa.html", run_manifest, viewer_manifest, copied_training)
+    return run_manifest
+
+
+def _find_rgbd_pairs(source: Path) -> tuple[list[Path], list[Path]]:
+    image_dir = source / "images"
+    if not image_dir.is_dir():
+        image_dir = source
+    depth_dir = None
+    for name in ["depth_selected", "depth", "depths", "frames2"]:
+        candidate = source / name
+        if candidate.is_dir():
+            depth_dir = candidate
+            break
+    rgb_files = _image_files(image_dir)
+    depth_files = _image_files(depth_dir) if depth_dir else []
+    return rgb_files, depth_files
+
+
+def _image_files(path: Path | None) -> list[Path]:
+    if path is None:
+        return []
+    return sorted([p for p in path.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg"}])
+
+
+def _load_rgbd_dependencies():
+    try:
+        import cv2
+        import numpy as np
+        from PIL import Image
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("RGBD 优化需要安装 opencv-python、numpy、Pillow") from exc
+    return cv2, np, Image
+
+
+def _estimate_intrinsics(width: int, height: int) -> dict[str, float]:
+    base_width, base_height = 1920.0, 1440.0
+    return {
+        "fx": 1335.671142578125 * (width / base_width),
+        "fy": 1335.671142578125 * (height / base_height),
+        "cx": 963.5147705078125 * (width / base_width),
+        "cy": 723.2529296875 * (height / base_height),
+    }
+
+
+def _scale_intrinsics(intrinsics: dict[str, float], sx: float, sy: float) -> dict[str, float]:
+    return {"fx": intrinsics["fx"] * sx, "fy": intrinsics["fy"] * sy, "cx": intrinsics["cx"] * sx, "cy": intrinsics["cy"] * sy}
+
+
+def _estimate_rgbd_pnp(
+    rgb_files: list[Path],
+    depth_files: list[Path],
+    *,
+    intrinsics: dict[str, float],
+    depth_intrinsics: dict[str, float],
+    target_size: tuple[int, int],
+    log: LogFn,
+):
+    cv2, np, Image = _load_rgbd_dependencies()
+    width, height = target_size
+    camera_matrix = np.array(
+        [[intrinsics["fx"], 0, intrinsics["cx"]], [0, intrinsics["fy"], intrinsics["cy"]], [0, 0, 1]],
+        np.float64,
+    )
+    orb = cv2.ORB_create(nfeatures=5000, scaleFactor=1.2, nlevels=8, fastThreshold=7)
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
+    poses = [np.eye(4, dtype=np.float64)]
+    stats: list[dict[str, Any]] = []
+    last_kp = last_des = last_depth = None
+    for index, (rgb, depth) in enumerate(zip(rgb_files, depth_files)):
+        gray = cv2.imread(str(rgb), cv2.IMREAD_GRAYSCALE)
+        dep = np.asarray(Image.open(depth)).astype(np.float32) * 0.001
+        kp, des = orb.detectAndCompute(gray, None)
+        if index == 0:
+            last_kp, last_des, last_depth = kp, des, dep
+            continue
+        ok = False
+        inliers = matches_n = objn = 0
+        step = None
+        if last_des is not None and des is not None and len(last_des) > 20 and len(des) > 20:
+            good = []
+            for pair in matcher.knnMatch(last_des, des, k=2):
+                if len(pair) < 2:
+                    continue
+                m, n = pair
+                if m.distance < 0.75 * n.distance:
+                    good.append(m)
+            matches_n = len(good)
+            objects = []
+            img2 = []
+            depth_height, depth_width = last_depth.shape[:2]
+            for match in good:
+                u, v = last_kp[match.queryIdx].pt
+                du = int(round(u * depth_width / width))
+                dv = int(round(v * depth_height / height))
+                if not (0 <= du < depth_width and 0 <= dv < depth_height):
+                    continue
+                z = float(last_depth[dv, du])
+                if not (0.35 < z < 5.5):
+                    continue
+                objects.append([(du - depth_intrinsics["cx"]) / depth_intrinsics["fx"] * z, (dv - depth_intrinsics["cy"]) / depth_intrinsics["fy"] * z, z])
+                img2.append(kp[match.trainIdx].pt)
+            objn = len(objects)
+            if objn >= 12:
+                objects_np = np.asarray(objects, np.float32)
+                img2_np = np.asarray(img2, np.float32)
+                ret, rvec, tvec, inlier_idx = cv2.solvePnPRansac(
+                    objects_np,
+                    img2_np,
+                    camera_matrix,
+                    None,
+                    iterationsCount=300,
+                    reprojectionError=5.0,
+                    confidence=0.995,
+                    flags=cv2.SOLVEPNP_ITERATIVE,
+                )
+                inliers = 0 if inlier_idx is None else len(inlier_idx)
+                if ret and inliers >= 20:
+                    rotation, _ = cv2.Rodrigues(rvec)
+                    transform = np.eye(4)
+                    transform[:3, :3] = rotation
+                    transform[:3, 3] = tvec[:, 0]
+                    step = float(np.linalg.norm(transform[:3, 3]))
+                    if step < 1.25:
+                        poses.append(poses[-1] @ np.linalg.inv(transform))
+                        ok = True
+        if not ok:
+            poses.append(poses[-1].copy())
+        stats.append(
+            {
+                "i": index,
+                "name": rgb.name,
+                "ok": ok,
+                "matches": matches_n,
+                "obj": objn,
+                "inliers": inliers,
+                "step": step,
+                "pos": poses[-1][:3, 3].round(5).tolist(),
+            }
+        )
+        if index % 50 == 0 or index == len(rgb_files) - 1:
+            log(f"RGBD-PnP: {index + 1}/{len(rgb_files)}")
+        last_kp, last_des, last_depth = kp, des, dep
+    return poses, stats
+
+
+def _fuse_rgbd_points(
+    rgb_files: list[Path],
+    depth_files: list[Path],
+    poses: list[Any],
+    *,
+    depth_intrinsics: dict[str, float],
+    target_size: tuple[int, int],
+    max_point_count: int,
+    stride: int,
+    keep_every: int,
+    log: LogFn,
+):
+    _cv2, np, Image = _load_rgbd_dependencies()
+    width, height = target_size
+    with Image.open(depth_files[0]) as depth_image:
+        depth_width, depth_height = depth_image.size
+    ys = np.arange(0, depth_height, stride, dtype=np.float64)
+    xs = np.arange(0, depth_width, stride, dtype=np.float64)
+    xx, yy = np.meshgrid(xs, ys)
+    flat_x = xx.reshape(-1)
+    flat_y = yy.reshape(-1)
+    points = []
+    colors = []
+    for index, (rgb_path, depth_path) in enumerate(zip(rgb_files, depth_files)):
+        rgb = np.asarray(Image.open(rgb_path).convert("RGB"))
+        dep = np.asarray(Image.open(depth_path)).astype(np.float64) * 0.001
+        z = dep[flat_y.astype(np.int32), flat_x.astype(np.int32)]
+        mask = (z > 0.35) & (z < 5.5)
+        if not np.any(mask):
+            continue
+        cam = np.stack(
+            [
+                (flat_x[mask] - depth_intrinsics["cx"]) / depth_intrinsics["fx"] * z[mask],
+                (flat_y[mask] - depth_intrinsics["cy"]) / depth_intrinsics["fy"] * z[mask],
+                z[mask],
+            ],
+            axis=1,
+        )
+        c2w = poses[index]
+        world = cam @ c2w[:3, :3].T + c2w[:3, 3]
+        keep = np.arange(world.shape[0]) % keep_every == 0
+        world = world[keep]
+        sx = np.clip((flat_x[mask][keep] * (width / depth_width)).astype(np.int32), 0, width - 1)
+        sy = np.clip((flat_y[mask][keep] * (height / depth_height)).astype(np.int32), 0, height - 1)
+        points.append(world.astype(np.float32))
+        colors.append(rgb[sy, sx, :].astype(np.uint8))
+        if index % 100 == 0:
+            log(f"融合点云: {index + 1}/{len(rgb_files)}")
+    pts = np.concatenate(points, axis=0) if points else np.zeros((0, 3), np.float32)
+    cols = np.concatenate(colors, axis=0) if colors else np.zeros((0, 3), np.uint8)
+    if len(pts) > max_point_count:
+        selected = np.linspace(0, len(pts) - 1, max_point_count, dtype=np.int64)
+        pts = pts[selected]
+        cols = cols[selected]
+    log(f"融合点云完成: {len(pts)} points")
+    return pts, cols
+
+
+def _copy_images(files: list[Path], output: Path) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    for path in files:
+        target = output / path.name
+        if not target.is_file():
+            shutil.copy2(path, target)
+
+
+def _write_thumbnails(files: list[Path], output: Path, Image) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.BICUBIC)
+    for path in files:
+        target = output / f"{path.stem}.jpg"
+        if target.is_file():
+            continue
+        image = Image.open(path).convert("RGB")
+        image.thumbnail((360, 270), resample)
+        image.save(target, quality=86)
+
+
+def _write_colmap_text(colmap_dir: Path, rgb_files: list[Path], poses: list[Any], intrinsics: dict[str, float], width: int, height: int) -> None:
+    colmap_dir.mkdir(parents=True, exist_ok=True)
+    (colmap_dir / "cameras.txt").write_text(
+        "# Camera list with one line of data per camera:\n"
+        "# CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n"
+        "# Number of cameras: 1\n"
+        f"1 PINHOLE {width} {height} {intrinsics['fx']:.9f} {intrinsics['fy']:.9f} {intrinsics['cx']:.9f} {intrinsics['cy']:.9f}\n",
+        encoding="utf-8",
+    )
+    with (colmap_dir / "images.txt").open("w", encoding="utf-8") as stream:
+        stream.write("# Image list with two lines of data per image:\n")
+        stream.write("# IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
+        stream.write("# POINTS2D[] as (X, Y, POINT3D_ID)\n")
+        stream.write(f"# Number of images: {len(rgb_files)}, mean observations per image: 1\n")
+        for index, path in enumerate(rgb_files, start=1):
+            c2w = poses[index - 1]
+            rotation = c2w[:3, :3].T
+            translation = -rotation @ c2w[:3, 3]
+            quat = _mat_to_qwxyz(rotation)
+            stream.write(
+                f"{index} {quat[0]:.12f} {quat[1]:.12f} {quat[2]:.12f} {quat[3]:.12f} "
+                f"{translation[0]:.12f} {translation[1]:.12f} {translation[2]:.12f} 1 {path.name}\n0 0 -1\n"
+            )
+    (colmap_dir / "points3D.txt").write_text("# Empty: RGBD fused point cloud is shown in point layer.\n", encoding="utf-8")
+
+
+def _mat_to_qwxyz(rotation) -> list[float]:
+    import numpy as np
+
+    trace = float(np.trace(rotation))
+    if trace > 0:
+        scale = math.sqrt(trace + 1.0) * 2
+        quat = [(0.25 * scale), (rotation[2, 1] - rotation[1, 2]) / scale, (rotation[0, 2] - rotation[2, 0]) / scale, (rotation[1, 0] - rotation[0, 1]) / scale]
+    else:
+        axis = int(np.argmax([rotation[0, 0], rotation[1, 1], rotation[2, 2]]))
+        if axis == 0:
+            scale = math.sqrt(1 + rotation[0, 0] - rotation[1, 1] - rotation[2, 2]) * 2
+            quat = [(rotation[2, 1] - rotation[1, 2]) / scale, 0.25 * scale, (rotation[0, 1] + rotation[1, 0]) / scale, (rotation[0, 2] + rotation[2, 0]) / scale]
+        elif axis == 1:
+            scale = math.sqrt(1 + rotation[1, 1] - rotation[0, 0] - rotation[2, 2]) * 2
+            quat = [(rotation[0, 2] - rotation[2, 0]) / scale, (rotation[0, 1] + rotation[1, 0]) / scale, 0.25 * scale, (rotation[1, 2] + rotation[2, 1]) / scale]
+        else:
+            scale = math.sqrt(1 + rotation[2, 2] - rotation[0, 0] - rotation[1, 1]) * 2
+            quat = [(rotation[1, 0] - rotation[0, 1]) / scale, (rotation[0, 2] + rotation[2, 0]) / scale, (rotation[1, 2] + rotation[2, 1]) / scale, 0.25 * scale]
+    q = np.array(quat, dtype=np.float64)
+    q /= np.linalg.norm(q)
+    return [float(x) for x in q]
+
+
+def _write_transforms(pose_dir: Path, rgb_files: list[Path], poses: list[Any], intrinsics: dict[str, float], width: int, height: int, stats: list[dict[str, Any]]) -> None:
+    import numpy as np
+
+    frames = []
+    for path, pose in zip(rgb_files, poses):
+        frames.append(
+            {
+                "file_path": f"images/{path.name}",
+                "colmap_transform_matrix": pose.astype(float).tolist(),
+                "fl_x": intrinsics["fx"],
+                "fl_y": intrinsics["fy"],
+                "cx": intrinsics["cx"],
+                "cy": intrinsics["cy"],
+                "w": width,
+                "h": height,
+            }
+        )
+    trajectory = np.array([pose[:3, 3] for pose in poses])
+    metadata = {
+        "source": "RGBD odometry via ORB depth PnP RANSAC",
+        "ok_steps": sum(item["ok"] for item in stats),
+        "fail_steps": sum(not item["ok"] for item in stats),
+        "median_inliers_ok": _median([item["inliers"] for item in stats if item["ok"]]),
+        "trajectory_bbox_min": trajectory.min(0).tolist(),
+        "trajectory_bbox_max": trajectory.max(0).tolist(),
+    }
+    transforms = {"camera_model": "PINHOLE", "fl_x": intrinsics["fx"], "fl_y": intrinsics["fy"], "cx": intrinsics["cx"], "cy": intrinsics["cy"], "w": width, "h": height, "frames": frames, "metadata": metadata}
+    (pose_dir / "transforms.json").write_text(json.dumps(transforms, indent=2), encoding="utf-8")
+    (pose_dir / "rgbd_odometry_stats.json").write_text(json.dumps({"frames": len(rgb_files), "stats": stats, "summary": metadata}, indent=2), encoding="utf-8")
+
+
+def _write_binary_rgb_ply(path: Path, points, colors) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as stream:
+        stream.write(
+            (
+                f"ply\nformat binary_little_endian 1.0\nelement vertex {len(points)}\n"
+                "property float x\nproperty float y\nproperty float z\n"
+                "property uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n"
+            ).encode("ascii")
+        )
+        for point, color in zip(points, colors):
+            stream.write(struct.pack("<fffBBB", float(point[0]), float(point[1]), float(point[2]), int(color[0]), int(color[1]), int(color[2])))
+
+
+def _write_ascii_rgb_ply(path: Path, points, colors) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="ascii") as stream:
+        stream.write(
+            f"ply\nformat ascii 1.0\nelement vertex {len(points)}\n"
+            "property float x\nproperty float y\nproperty float z\n"
+            "property uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n"
+        )
+        for point, color in zip(points, colors):
+            stream.write(f"{float(point[0]):.6f} {float(point[1]):.6f} {float(point[2]):.6f} {int(color[0])} {int(color[1])} {int(color[2])}\n")
+
+
+def _resolve_training_artifacts(config: RGBDOptimizeConfig, source: Path) -> dict[str, str | None]:
+    explicit = {
+        "ply": str(config.trained_ply) if config.trained_ply else None,
+        "metrics": str(config.training_metrics) if config.training_metrics else None,
+        "preview": str(config.training_preview) if config.training_preview else None,
+        "contact_sheet": str(config.training_contact_sheet) if config.training_contact_sheet else None,
+    }
+    if explicit["ply"]:
+        return explicit
+    candidates = []
+    if source.name.endswith("_input"):
+        candidates.append(source.with_name(source.name[: -len("_input")]))
+    candidates.append(source.parent / source.name.replace("_input", ""))
+    for root in candidates:
+        if not root.is_dir():
+            continue
+        for ply in sorted(root.glob("gsplat*/pose_init_trained_scene.ply")):
+            return {
+                "ply": str(ply),
+                "metrics": str(ply.with_name("pose_init_training_metrics.json")) if ply.with_name("pose_init_training_metrics.json").is_file() else None,
+                "preview": str(ply.with_name("pose_init_training_preview.png")) if ply.with_name("pose_init_training_preview.png").is_file() else None,
+                "contact_sheet": str(ply.with_name("pose_init_training_contact_sheet.png")) if ply.with_name("pose_init_training_contact_sheet.png").is_file() else None,
+            }
+    return explicit
+
+
+def _run_or_resolve_training(config: RGBDOptimizeConfig, pose_dir: Path, source: Path, log: LogFn) -> dict[str, str | None]:
+    if config.train_gsplat:
+        if config.gsplat_python is None or config.gsplat_train_script is None:
+            raise RuntimeError("训练 3DGS 需要 gsplat_python 和 gsplat_train_script")
+        output_dir = config.output / "gsplat_training"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_ply = output_dir / "pose_init_trained_scene.ply"
+        preview = output_dir / "pose_init_training_preview.png"
+        contact = output_dir / "pose_init_training_contact_sheet.png"
+        metrics = output_dir / "pose_init_training_metrics.json"
+        command = [
+            str(config.gsplat_python),
+            str(config.gsplat_train_script),
+            "--pose-init-dir",
+            str(pose_dir),
+            "--output-dir",
+            str(output_dir),
+            "--output-ply",
+            str(output_ply),
+            "--preview-output",
+            str(preview),
+            "--multi-preview-output",
+            str(contact),
+            "--metrics-output",
+            str(metrics),
+            "--max-steps",
+            str(config.gsplat_max_steps),
+            "--max-frames",
+            str(config.gsplat_max_frames),
+            "--image-max-size",
+            str(config.gsplat_image_max_size),
+            "--max-points",
+            str(config.gsplat_max_points),
+            "--target-gaussians",
+            str(config.gsplat_target_gaussians),
+            "--device",
+            config.gsplat_device,
+        ]
+        log("开始从零训练 3DGS: " + " ".join(command))
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        assert process.stdout is not None
+        for line in process.stdout:
+            log("[gsplat] " + line.rstrip())
+        process.stdout.close()
+        code = process.wait()
+        if code != 0:
+            raise RuntimeError(f"3DGS 训练失败，退出码 {code}")
+        if not output_ply.is_file() or not metrics.is_file():
+            raise RuntimeError("3DGS 训练结束但缺少输出 PLY 或 metrics")
+        log(f"3DGS 训练完成: {output_ply}")
+        return {"ply": str(output_ply), "metrics": str(metrics), "preview": str(preview) if preview.is_file() else None, "contact_sheet": str(contact) if contact.is_file() else None}
+    return _resolve_training_artifacts(config, source)
+
+
+def _copy_training_previews(training: dict[str, str | None], assets: Path) -> dict[str, str]:
+    copied = {}
+    for key in ["metrics", "preview", "contact_sheet"]:
+        value = training.get(key)
+        if not value:
+            continue
+        source = Path(value)
+        if not source.is_file():
+            continue
+        target = assets / source.name
+        shutil.copy2(source, target)
+        copied[key] = target.name
+    return copied
+
+
+def _build_viewer_manifest(
+    *,
+    config: RGBDOptimizeConfig,
+    viewer: Path,
+    point_cloud: Path,
+    colmap_dir: Path,
+    spark_asset: Path | None,
+    spark_info: dict[str, Any],
+    metrics: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema": "images23dgs.layered_viewer.v1",
+        "title": config.scene_name,
+        "package_dir": None,
+        "layers": {
+            "spark_3dgs": {
+                "label": "Spark 3DGS visual from RGBD optimization",
+                "available": bool(spark_asset and spark_asset.is_file() and spark_info.get("has_3dgs_fields")),
+                "file": _relative(viewer, spark_asset),
+                "gaussians": spark_info.get("vertex_count"),
+                "has_3dgs_fields": spark_info.get("has_3dgs_fields", False),
+                "source": "trained gsplat PLY attached to RGBD-PnP trajectory" if spark_asset else "No trained gsplat artifact supplied or discovered.",
+            },
+            "point_cloud": {
+                "label": "RGBD fused point cloud using PnP odometry",
+                "available": True,
+                "file": _relative(viewer, point_cloud),
+                "points": metrics["point_count"],
+                "source": "Depth images back-projected with estimated RGBD-PnP camera poses.",
+            },
+            "collision_mesh": {"label": "collision mesh unavailable", "available": False, "obj": None, "source": "Not generated yet."},
+            "mjcf_geoms": {"label": "MJCF unavailable", "available": False, "xml": None},
+            "colmap": {
+                "label": "RGBD-PnP camera trajectory + image planes",
+                "available": True,
+                "images_txt": _relative(viewer, colmap_dir / "images.txt"),
+                "points3D_txt": _relative(viewer, colmap_dir / "points3D.txt"),
+                "cameras_txt": _relative(viewer, colmap_dir / "cameras.txt"),
+                "transform": {"scale_xyz": [1, 1, 1], "translate_xyz": [0, 0, 0], "note": "Camera poses are RGBD-PnP estimates, not COLMAP SfM."},
+                "image_thumbnail_base": _relative(viewer, colmap_dir / "thumbs"),
+                "image_thumbnail_ext": ".jpg",
+                "image_thumbnail_max": min(220, int(metrics["rgb_frames"])),
+                "camera_frustum_depth": 0.55,
+                "source": "RGBD odometry from input RGB/depth frames.",
+            },
+        },
+        "metrics": metrics,
+        "notes": [
+            "This job really ran RGBD ORB + depth PnP RANSAC and fused the depth point cloud.",
+            "COLMAP layer is a text-model compatibility layer backed by RGBD-PnP poses.",
+        ],
+    }
+
+
+def _write_source_view_qa(path: Path, run_manifest: dict[str, Any], viewer_manifest: dict[str, Any], copied_training: dict[str, str]) -> None:
+    metrics = viewer_manifest.get("metrics", {})
+    preview = copied_training.get("preview")
+    contact = copied_training.get("contact_sheet")
+    preview_html = f"<img src='viewer/assets/{preview}' alt='training preview'>" if preview else "<p>未发现训练 preview。</p>"
+    contact_html = f"<img src='viewer/assets/{contact}' alt='training contact sheet'>" if contact else ""
+    path.write_text(
+        "<!doctype html><meta charset='utf-8'><title>源视角质检</title>"
+        "<style>body{font-family:system-ui;background:#101417;color:#eef;padding:28px}img{max-width:100%;border:1px solid #34404a;border-radius:6px;margin:12px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.card{background:#161d24;border:1px solid #2c3844;border-radius:8px;padding:14px}</style>"
+        "<h1>源视角质检</h1>"
+        "<div class='grid'>"
+        f"<div class='card'><b>RGB帧</b><p>{metrics.get('rgb_frames')}</p></div>"
+        f"<div class='card'><b>Depth帧</b><p>{metrics.get('depth_frames')}</p></div>"
+        f"<div class='card'><b>RGBD-PnP成功步</b><p>{metrics.get('rgbd_pnp_ok_steps')}</p></div>"
+        f"<div class='card'><b>融合点</b><p>{metrics.get('point_count')}</p></div>"
+        f"<div class='card'><b>Spark 3DGS</b><p>{metrics.get('trained_gaussian_count') or '未接入训练结果'}</p></div>"
+        f"<div class='card'><b>PSNR</b><p>{metrics.get('gsplat_multi_preview_mean_psnr') or metrics.get('gsplat_final_preview_psnr') or '未训练'}</p></div>"
+        "</div>"
+        "<h2>训练预览</h2>"
+        f"{preview_html}{contact_html}"
+        f"<h2>Manifest</h2><pre>{json.dumps(run_manifest, indent=2, ensure_ascii=False)}</pre>",
+        encoding="utf-8",
+    )
+
+
+def _write_dry_run(config: RGBDOptimizeConfig, rgb_files: list[Path], depth_files: list[Path]) -> dict[str, Any]:
+    reports = config.output / "reports"
+    viewer = config.output / "viewer"
+    reports.mkdir(parents=True, exist_ok=True)
+    viewer.mkdir(parents=True, exist_ok=True)
+    (viewer / "index.html").write_text(VIEWER_HTML, encoding="utf-8")
+    (viewer / "viewer_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "images23dgs.layered_viewer.v1",
+                "title": config.scene_name,
+                "layers": {
+                    "spark_3dgs": {"available": False},
+                    "point_cloud": {"available": False},
+                    "collision_mesh": {"available": False},
+                    "mjcf_geoms": {"available": False},
+                    "colmap": {"available": False},
+                },
+                "metrics": {"rgb_frames": len(rgb_files), "depth_frames": len(depth_files)},
+                "notes": ["RGBD dry-run did not execute PnP or point fusion."],
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    manifest = {"schema": "images23dgs.rgbd_optimized.v1", "source": str(config.source), "output": str(config.output), "rgbd": {"rgb_frames": len(rgb_files), "depth_frames": len(depth_files)}, "dry_run": True}
+    (reports / "run_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (config.output / "source_view_qa.html").write_text("<!doctype html><meta charset='utf-8'><h1>RGBD dry-run</h1>", encoding="utf-8")
+    return manifest
+
+
+def _relative(base: Path, path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        return path.resolve().relative_to(base.resolve()).as_posix()
+    except ValueError:
+        import os
+
+        return os.path.relpath(path.resolve(), base.resolve())
+
+
+def _trajectory_bounds(poses: list[Any]) -> tuple[list[float], list[float]]:
+    import numpy as np
+
+    trajectory = np.array([pose[:3, 3] for pose in poses])
+    return trajectory.min(0).tolist(), trajectory.max(0).tolist()
+
+
+def _point_bounds(points) -> tuple[list[float], list[float]]:
+    if len(points) == 0:
+        return [0, 0, 0], [0, 0, 0]
+    return points.min(0).tolist(), points.max(0).tolist()
+
+
+def _median(values: list[float | int]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(float(v) for v in values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _extract_training_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    keys = [
+        "trained_gaussian_count",
+        "max_steps",
+        "frame_count",
+        "source_frame_size",
+        "final_loss",
+        "final_preview_psnr",
+        "multi_preview_mean_psnr",
+        "mean_step_psnr_last_10",
+    ]
+    return {f"gsplat_{key}": metrics[key] for key in keys if key in metrics}
