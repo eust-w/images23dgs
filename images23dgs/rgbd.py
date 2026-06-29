@@ -118,7 +118,7 @@ AHOLO_VIEWER_HTML = r"""<!doctype html>
         Vector3,
         createViewer,
         setViewerConfig,
-      } = await import("https://esm.sh/@manycore/aholo-viewer@1.5.2");
+      } = await import("https://esm.sh/@manycore/aholo-viewer@1.5.1");
 
       viewer = createViewer("images23dgs-aholo-viewer", container, {});
       camera = new PerspectiveCamera(60, Math.max(0.1, container.clientWidth / Math.max(1, container.clientHeight)), 0.01, 2000);

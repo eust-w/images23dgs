@@ -60,8 +60,8 @@ It performs:
 3. Creates `/opt/images23dgs_app/src`, `/opt/images23dgs_app/workspace`, and a
    Python virtual environment.
 4. Installs `images23dgs[web]` and `uv`.
-5. Installs bundled Node.js 22 and `@manycore/aholo-splat-transform` for
-   converting large 3DGS PLY files to Aholo-friendly `spz`.
+5. Installs bundled Node.js 22 and `@manycore/aholo-splat-transform@1.5.1` for
+   converting large 3DGS PLY files to Aholo-friendly `spz/sog`.
 6. Writes `/opt/images23dgs_app/config.toml`.
 7. Runs `images23dgs product doctor`.
 8. With `--start`, starts the FastAPI backend, static Chinese frontend, and
@@ -273,7 +273,7 @@ real2sim_root = "/opt/gs_playground_real2sim_48q"
 gsplat_python = "/opt/real2sim_paper_runtime/envs/anysplat/bin/python"
 gsplat_train_script = "/opt/gs_playground_real2sim_48q/scripts/real2sim_pose_init_gsplat_train.py"
 aholo_splat_transform_binary = "/opt/images23dgs_app/node/bin/splat-transform"
-aholo_convert_format = "spz"
+aholo_convert_format = "sog"
 colmap_binary = "/usr/local/bin/colmap"
 host = "0.0.0.0"
 port = 18123

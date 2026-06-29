@@ -53,7 +53,7 @@ http://127.0.0.1:18124/
 2. 从 GitHub 下载仓库源码包。
 3. 创建 `/opt/images23dgs_app/src`、`/opt/images23dgs_app/workspace` 和 Python 虚拟环境。
 4. 安装 `images23dgs[web]` 和 `uv`。
-5. 安装内置 Node.js 22 和 `@manycore/aholo-splat-transform`，用于把大 3DGS PLY 转成 Aholo 更适合加载的 `spz`。
+5. 安装内置 Node.js 22 和 `@manycore/aholo-splat-transform@1.5.1`，用于把大 3DGS PLY 转成 Aholo 更适合加载的 `spz/sog`。
 6. 写入 `/opt/images23dgs_app/config.toml`。
 7. 执行 `images23dgs product doctor` 做环境检查。
 8. 带 `--start` 时，启动 FastAPI 后端、中文静态前端和串行任务 worker，默认监听 `0.0.0.0:18123`。
@@ -258,7 +258,7 @@ real2sim_root = "/opt/gs_playground_real2sim_48q"
 gsplat_python = "/opt/real2sim_paper_runtime/envs/anysplat/bin/python"
 gsplat_train_script = "/opt/gs_playground_real2sim_48q/scripts/real2sim_pose_init_gsplat_train.py"
 aholo_splat_transform_binary = "/opt/images23dgs_app/node/bin/splat-transform"
-aholo_convert_format = "spz"
+aholo_convert_format = "sog"
 colmap_binary = "/usr/local/bin/colmap"
 host = "0.0.0.0"
 port = 18123

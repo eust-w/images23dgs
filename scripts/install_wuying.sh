@@ -8,6 +8,7 @@ if [[ "${1:-}" == "--dry-run" ]]; then
 fi
 PYTHON_BOOTSTRAP="${PYTHON_BOOTSTRAP:-python3}"
 NODE_VERSION="${IMAGES23DGS_NODE_VERSION:-22.22.1}"
+AHOLO_SPLAT_TRANSFORM_VERSION="${IMAGES23DGS_AHOLO_SPLAT_TRANSFORM_VERSION:-1.5.1}"
 SKIP_AHOLO_NODE="${IMAGES23DGS_SKIP_AHOLO_NODE:-0}"
 
 run() {
@@ -83,9 +84,9 @@ install_aholo_transform() {
 
   export PATH="$APP_ROOT/node/bin:$PATH"
   if [[ "$DRY_RUN" == "1" ]]; then
-    echo "+ $npm_bin install -g @manycore/aholo-splat-transform"
+    echo "+ $npm_bin install -g @manycore/aholo-splat-transform@${AHOLO_SPLAT_TRANSFORM_VERSION}"
   elif [[ -x "$npm_bin" ]]; then
-    run "$npm_bin" install -g @manycore/aholo-splat-transform
+    run "$npm_bin" install -g "@manycore/aholo-splat-transform@${AHOLO_SPLAT_TRANSFORM_VERSION}"
   else
     echo "skip Aholo splat-transform install: npm not available at $npm_bin" >&2
   fi

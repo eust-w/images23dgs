@@ -168,7 +168,7 @@ class ProductTests(unittest.TestCase):
             report = run_doctor(config)
             self.assertIn("checks", report)
             self.assertIn("aholo_splat_transform", report["checks"])
-            self.assertEqual(config.aholo_convert_format, "spz")
+            self.assertEqual(config.aholo_convert_format, "sog")
             self.assertEqual(config.aholo_splat_transform_binary, Path(tmp) / "node" / "bin" / "splat-transform")
             self.assertEqual(config.workspace_dir, Path(tmp) / "workspace")
 
