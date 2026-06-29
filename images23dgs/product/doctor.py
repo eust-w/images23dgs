@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,7 +16,7 @@ def run_doctor(config: ProductConfig) -> dict[str, Any]:
     gsplat = _command_probe([str(config.gsplat_python), "-c", "import torch; from gsplat import rasterization; print('torch+gsplat rasterization ok')"])
     node_binary = _node_binary_for(config)
     node = _command_probe([str(node_binary), "--version"]) if node_binary else {"ok": False, "summary": "missing:node"}
-    aholo = _command_probe([str(config.aholo_splat_transform_binary), "--version"])
+    aholo = _command_probe([str(config.aholo_splat_transform_binary), "--version"], extra_path=config.aholo_splat_transform_binary.parent)
     nvidia = _command_probe(["nvidia-smi", "--query-gpu=name,memory.total,memory.used", "--format=csv,noheader"])
     real2sim_ok = (config.real2sim_root / "real2sim").exists() or (config.real2sim_root / "real2sim_video_motrix_scene.py").exists()
     disk = shutil.disk_usage(config.workspace_dir)
@@ -92,11 +93,14 @@ def print_doctor(config: ProductConfig) -> None:
     print(json.dumps(run_doctor(config), indent=2, ensure_ascii=False))
 
 
-def _command_probe(command: list[str]) -> dict[str, object]:
+def _command_probe(command: list[str], *, extra_path: Path | None = None) -> dict[str, object]:
     if shutil.which(command[0]) is None and not Path(command[0]).exists():
         return {"ok": False, "summary": f"missing:{command[0]}"}
+    env = os.environ.copy()
+    if extra_path is not None:
+        env["PATH"] = f"{extra_path}:{env.get('PATH', '')}"
     try:
-        completed = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=8)
+        completed = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=8, env=env)
     except Exception as exc:
         return {"ok": False, "summary": str(exc)}
     first = (completed.stdout or "").splitlines()[0:2]

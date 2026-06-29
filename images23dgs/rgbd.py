@@ -1112,8 +1112,10 @@ def _prepare_aholo_asset(config: RGBDOptimizeConfig, source_ply: Path, assets: P
     command = [str(binary), "create", str(source_ply), str(output)]
     result.update({"attempted": True, "output": str(output), "command": command})
     log(f"Aholo 转换开始: {' '.join(command)}")
+    env = os.environ.copy()
+    env["PATH"] = f"{binary.parent}:{env.get('PATH', '')}"
     try:
-        completed = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=1800)
+        completed = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=1800, env=env)
     except Exception as exc:
         result["summary"] = str(exc)
         log(f"Aholo 转换失败: {exc}")
