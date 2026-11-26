@@ -1249,6 +1249,12 @@ def _write_aholo_viewer(viewer: Path, spark_asset: Path | None, spark_info: dict
 
 def _write_source_view_qa(path: Path, run_manifest: dict[str, Any], viewer_manifest: dict[str, Any], copied_training: dict[str, str]) -> None:
     metrics = viewer_manifest.get("metrics", {})
+    spark_layer = viewer_manifest.get("layers", {}).get("spark_3dgs", {})
+    spark_count = (
+        metrics.get("trained_gaussian_count")
+        or metrics.get("gsplat_trained_gaussian_count")
+        or spark_layer.get("gaussians")
+    )
     preview = copied_training.get("preview")
     contact = copied_training.get("contact_sheet")
     preview_html = f"<img src='viewer/assets/{preview}' alt='training preview'>" if preview else "<p>未发现训练 preview。</p>"
@@ -1262,7 +1268,7 @@ def _write_source_view_qa(path: Path, run_manifest: dict[str, Any], viewer_manif
         f"<div class='card'><b>Depth帧</b><p>{metrics.get('depth_frames')}</p></div>"
         f"<div class='card'><b>RGBD-PnP成功步</b><p>{metrics.get('rgbd_pnp_ok_steps')}</p></div>"
         f"<div class='card'><b>融合点</b><p>{metrics.get('point_count')}</p></div>"
-        f"<div class='card'><b>Spark 3DGS</b><p>{metrics.get('trained_gaussian_count') or '未接入训练结果'}</p></div>"
+        f"<div class='card'><b>Spark 3DGS</b><p>{spark_count or '未接入训练结果'}</p></div>"
         f"<div class='card'><b>PSNR</b><p>{metrics.get('gsplat_multi_preview_mean_psnr') or metrics.get('gsplat_final_preview_psnr') or '未训练'}</p></div>"
         "</div>"
         "<h2>训练预览</h2>"
